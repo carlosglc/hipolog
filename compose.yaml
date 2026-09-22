@@ -1,0 +1,24 @@
+# /home/jerry/docker/hipolog/compose.yaml
+services:
+  hipolog:
+    build: .
+    # o, si prefieres construir en otra máquina:
+    # image: hipolog:latest
+    container_name: hipolog
+    restart: unless-stopped
+    ports:
+      # 8477 en el host: libre de los que ya usas (5000 Kavita, 8096
+      # Jellyfin, 8080) y de los defaults típicos de homelab.
+      - "8477:3000"
+    environment:
+      ORIGIN: "http://homie-lab.local:8477" # adapter-node valida el origen de los POST
+      TZ: "America/Mexico_City"
+      # Integración opcional con glucose-pipeline: mientras no exista su
+      # REST API, esto se queda comentado y la app funciona igual.
+      # GLUCOSA_URL: "http://homie-lab.local:8478/glucose/current"
+      # GLUCOSA_TIMEOUT_MS: "1500"
+    volumes:
+      - hipolog-datos:/datos
+
+volumes:
+  hipolog-datos:
