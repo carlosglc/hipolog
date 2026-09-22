@@ -24,15 +24,26 @@
 	// --- Curva de 24 h -------------------------------------------------
 	// Un solo eje: la glucosa. Las tomas NO son una segunda escala, son
 	// marcas verticales sobre el mismo eje de tiempo.
-	const V = { w: 400, h: 190, arriba: 20, abajo: 26 };
+	//
+	// El SVG solo dibuja trazos y se estira con preserveAspectRatio="none";
+	// TODO el texto (límites, horas, pastillas) es HTML encima, posicionado
+	// en porcentajes. Así las letras se ven del mismo tamaño en un celular
+	// de 360 px y en un monitor de 1400, en vez de encogerse o inflarse con
+	// el viewBox.
 	const SG_MIN = 40;
 	const SG_MAX = 320;
+
+	/** Glucosa → % desde arriba del área de dibujo. */
 	const py = (sg: number) => {
 		const v = Math.min(SG_MAX, Math.max(SG_MIN, sg));
-		return V.arriba + (V.h - V.arriba - V.abajo) * (1 - (v - SG_MIN) / (SG_MAX - SG_MIN));
+		return (1 - (v - SG_MIN) / (SG_MAX - SG_MIN)) * 100;
 	};
-	const px = (x: number, c: { x0: number; x1: number }) =>
-		((x - c.x0) / Math.max(1, c.x1 - c.x0)) * V.w;
+	/** Minuto del eje → % desde la izquierda. */
+	const px = (x: number) => {
+		const c = data.curva;
+		if (!c) return 0;
+		return ((x - c.x0) / Math.max(1, c.x1 - c.x0)) * 100;
+	};
 
 	// Un hueco del sensor se dibuja como hueco, no como una recta que lo cruza.
 	const segmentos = $derived.by(() => {
@@ -46,7 +57,7 @@
 				out.push(actual.join(' '));
 				actual = [];
 			}
-			actual.push(`${px(p.x, c).toFixed(1)},${py(p.sg).toFixed(1)}`);
+			actual.push(`${px(p.x).toFixed(2)},${py(p.sg).toFixed(2)}`);
 			previo = p.x;
 		}
 		if (actual.length) out.push(actual.join(' '));
@@ -58,10 +69,13 @@
 		if (!c) return [];
 		const t: { x: number; etiqueta: string }[] = [];
 		for (let m = Math.ceil(c.x0 / 360) * 360; m <= c.x1; m += 360) {
-			t.push({ x: px(m, c), etiqueta: `${String(Math.floor((m % 1440) / 60)).padStart(2, '0')}h` });
+			t.push({ x: px(m), etiqueta: `${String(Math.floor((m % 1440) / 60)).padStart(2, '0')}h` });
 		}
 		return t;
 	});
+
+	/** Las pastillas se salen del marco si la toma cae en el borde. */
+	const dentro = (n: number) => Math.min(96, Math.max(4, n));
 
 	// Hace cuánto llegó la última lectura, sin construir Dates.
 	const minutosDesdeLectura = $derived.by(() => {
@@ -90,6 +104,8 @@
 		</p>
 	</header>
 
+	<div class="cols">
+	<div class="col captura">
 	<!-- REGISTRAR ------------------------------------------------------- -->
 	<section class="tarjeta registro">
 		<form method="POST" action="?/registrar" use:enhance>
@@ -191,35 +207,41 @@
 		</div>
 	</section>
 
+	</div>
+	<div class="col panel">
 	<!-- CURVA DE 24 H ---------------------------------------------------- -->
 	{#if data.curva && segmentos.length}
 		<section class="tarjeta">
 			<h2>Glucosa <small>últimas 24 h, con tus tomas encima</small></h2>
-			<svg class="curva" viewBox="0 0 {V.w} {V.h}" role="img"
-				aria-label="Curva de glucosa de las últimas 24 horas con marcas donde tomaste tabletas">
-				<!-- zona baja: donde las tabletas hacen falta -->
-				<rect x="0" y={py(LIMITE_BAJO)} width={V.w} height={py(SG_MIN) - py(LIMITE_BAJO)} class="zona-baja" />
-				<line x1="0" x2={V.w} y1={py(LIMITE_BAJO)} y2={py(LIMITE_BAJO)} class="limite bajo" />
-				<line x1="0" x2={V.w} y1={py(LIMITE_ALTO)} y2={py(LIMITE_ALTO)} class="limite" />
-				<text x="4" y={py(LIMITE_BAJO) - 4} class="limite-txt">{LIMITE_BAJO}</text>
-				<text x="4" y={py(LIMITE_ALTO) - 4} class="limite-txt">{LIMITE_ALTO}</text>
+			<div class="curva-caja">
+				<svg class="curva" viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
+					aria-label="Curva de glucosa de las últimas 24 horas con marcas donde tomaste tabletas">
+					<rect x="0" y={py(LIMITE_BAJO)} width="100" height={100 - py(LIMITE_BAJO)} class="zona-baja" />
+					<line x1="0" x2="100" y1={py(LIMITE_BAJO)} y2={py(LIMITE_BAJO)}
+						class="limite bajo" vector-effect="non-scaling-stroke" />
+					<line x1="0" x2="100" y1={py(LIMITE_ALTO)} y2={py(LIMITE_ALTO)}
+						class="limite" vector-effect="non-scaling-stroke" />
+					{#each data.curva.marcas as m (m.id)}
+						<line x1={px(m.x)} x2={px(m.x)} y1="0" y2="100"
+							class="marca-toma" vector-effect="non-scaling-stroke" />
+					{/each}
+					{#each segmentos as d, i (i)}
+						<polyline points={d} class="linea" vector-effect="non-scaling-stroke" />
+					{/each}
+				</svg>
 
-				{#each marcasHora as t (t.x)}
-					<text x={t.x} y={V.h - 6} class="hora-txt" text-anchor="middle">{t.etiqueta}</text>
-				{/each}
-
+				<span class="guia" style="top: {py(LIMITE_ALTO)}%">{LIMITE_ALTO}</span>
+				<span class="guia" style="top: {py(LIMITE_BAJO)}%">{LIMITE_BAJO}</span>
 				{#each data.curva.marcas as m (m.id)}
-					<line x1={px(m.x, data.curva)} x2={px(m.x, data.curva)} y1={V.arriba} y2={V.h - V.abajo} class="marca-toma" />
-					<g transform="translate({px(m.x, data.curva)}, {V.arriba})">
-						<rect x="-14" y="-15" width="28" height="18" rx="9" class="marca-pill" />
-						<text x="0" y="-2" text-anchor="middle" class="marca-txt">+{decimal(m.tabletas)}</text>
-					</g>
+					<span class="pastilla" style="left: {dentro(px(m.x))}%"
+						title="{m.hora}: {decimal(m.tabletas)} tabletas">+{decimal(m.tabletas)}</span>
 				{/each}
-
-				{#each segmentos as d, i (i)}
-					<polyline points={d} class="linea" />
+			</div>
+			<div class="eje-x">
+				{#each marcasHora as t (t.x)}
+					<span style="left: {dentro(t.x)}%">{t.etiqueta}</span>
 				{/each}
-			</svg>
+			</div>
 			<p class="pie">
 				Cada marca es una toma. Lo que pasa después de la marca es la respuesta a
 				si alcanzaron.
@@ -319,6 +341,9 @@
 		</details>
 	</section>
 
+	</div>
+	</div>
+
 	<footer>Registro personal, no es un dispositivo médico. Los datos viven en tu SQLite.</footer>
 </main>
 
@@ -367,6 +392,14 @@
 		--bien: #4caf50;
 	}
 
+	/* Sin esto cada tarjeta mide 30 px más que su columna (padding + borde
+	   por fuera) y la página se desborda de lado en el celular. */
+	:global(*),
+	:global(*::before),
+	:global(*::after) {
+		box-sizing: border-box;
+	}
+
 	:global(body) {
 		margin: 0;
 		background: var(--bg);
@@ -376,12 +409,49 @@
 	}
 
 	main {
-		max-width: 640px;
+		max-width: 1180px;
 		margin: 0 auto;
 		padding: 20px 16px 48px;
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
+	}
+
+	/* Móvil: una sola columna, y los botones hasta arriba — la app se usa
+	   a media corrida, el registro va primero y punto. */
+	.cols {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+	.col {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		min-width: 0; /* sin esto, la curva estira la columna del grid */
+	}
+	/* Una fila larga del historial no tiene por qué ensanchar la tarjeta:
+	   que se recorte con puntos suspensivos, no que empuje la página. */
+	.col > * {
+		max-width: 100%;
+	}
+
+	/* Escritorio: captura y cifras a la izquierda, gráficas e historial a la
+	   derecha. La columna de captura se queda fija al hacer scroll. */
+	@media (min-width: 900px) {
+		main {
+			padding: 28px 24px 56px;
+		}
+		.cols {
+			display: grid;
+			grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+			align-items: start;
+			gap: 18px;
+		}
+		.col.captura {
+			position: sticky;
+			top: 20px;
+		}
 	}
 
 	h1 {
@@ -583,11 +653,22 @@
 	}
 
 	/* --- curva de 24 h --- */
+	.curva-caja {
+		position: relative;
+		height: 150px;
+		margin-top: 8px;
+	}
+	@media (min-width: 900px) {
+		.curva-caja {
+			height: 230px;
+		}
+	}
 	.curva {
+		position: absolute;
+		inset: 0;
 		width: 100%;
-		height: auto;
+		height: 100%;
 		display: block;
-		overflow: visible;
 	}
 	.linea {
 		fill: none;
@@ -609,24 +690,46 @@
 		stroke: var(--malo);
 		opacity: 0.55;
 	}
-	.limite-txt,
-	.hora-txt {
-		fill: var(--ink-3);
-		font-size: 12px;
-	}
 	.marca-toma {
 		stroke: var(--ink-3);
 		stroke-width: 1;
 		stroke-dasharray: 2 3;
 		opacity: 0.7;
 	}
-	.marca-pill {
-		fill: var(--acento);
+	/* El texto es HTML encima del SVG: nítido y del mismo tamaño en
+	   cualquier ancho, porque no lo escala el viewBox. */
+	.guia,
+	.eje-x span {
+		position: absolute;
+		font-size: 0.7rem;
+		color: var(--ink-3);
+		pointer-events: none;
 	}
-	.marca-txt {
-		fill: var(--acento-ink);
-		font-size: 11px;
+	.guia {
+		left: 2px;
+		transform: translateY(-115%);
+		background: var(--surface);
+		padding: 0 3px;
+	}
+	.pastilla {
+		position: absolute;
+		top: 0;
+		transform: translate(-50%, -4px);
+		background: var(--acento);
+		color: var(--acento-ink);
+		font-size: 0.7rem;
 		font-weight: 700;
+		border-radius: 999px;
+		padding: 2px 7px;
+		white-space: nowrap;
+	}
+	.eje-x {
+		position: relative;
+		height: 16px;
+		margin-top: 2px;
+	}
+	.eje-x span {
+		transform: translateX(-50%);
 	}
 
 	/* --- tile del sensor --- */
@@ -739,6 +842,7 @@
 		gap: 8px;
 		padding: 8px 0;
 		border-top: 1px solid var(--line);
+		min-width: 0;
 	}
 	.hora {
 		font-variant-numeric: tabular-nums;
@@ -751,7 +855,8 @@
 	.meta {
 		color: var(--ink-3);
 		font-size: 0.8rem;
-		flex: 1;
+		flex: 1 1 0;
+		min-width: 0; /* sin esto la fila no se encoge y estira la tarjeta */
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
