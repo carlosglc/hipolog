@@ -11,7 +11,13 @@ services:
       # Jellyfin, 8080) y de los defaults típicos de homelab.
       - "8477:3000"
     environment:
-      ORIGIN: "http://homie-lab.local:8477" # adapter-node valida el origen de los POST
+      # ORIGIN va comentado A PROPÓSITO. adapter-node valida el origen de
+      # los POST contra ORIGIN si está fijo; con Tailscale vas a entrar por
+      # varias URLs (homie-lab.local en la LAN, el nombre del tailnet desde
+      # fuera, la IP a veces) y cualquiera que no sea la fijada daría 403.
+      # Sin ORIGIN, se infiere del header Host y todas funcionan, sin dejar
+      # de bloquear POST de otro sitio.
+      # ORIGIN: "http://homie-lab.local:8477"
       TZ: "America/Mexico_City"
       # Sensor: el proxy REST de carelink-python-client
       # (carelink_client2_proxy.py, puerto 8081). Descoméntalo cuando ese

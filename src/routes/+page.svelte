@@ -194,8 +194,11 @@
 			<div class="tile">
 				<span class="etiqueta">Cada tableta sube</span>
 				<strong>+{Math.round(data.subida.porTableta)}</strong>
-				<span class="pie">mg/dL a los 30 min · {data.subida.eventos}
-					{data.subida.eventos === 1 ? 'evento medido' : 'eventos medidos'}</span>
+				<span class="pie">
+					mg/dL a los 30 min, en reposo · {data.subida.eventos}
+					{data.subida.eventos === 1 ? 'evento' : 'eventos'}{#if data.subida.enEjercicio}{' '}·
+						{data.subida.enEjercicio} en ejercicio aparte{/if}
+				</span>
 			</div>
 		{/if}
 		<div class="tile">

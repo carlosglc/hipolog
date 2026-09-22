@@ -89,14 +89,28 @@ export function masCercana(
 	return mejorDist <= toleranciaMin ? mejor : null;
 }
 
-/** Cuánto subió cada tableta, en mg/dL, promediando los eventos que tienen ambos datos. */
+/**
+ * Cuánto sube cada tableta, en mg/dL a los 30 minutos.
+ *
+ * Dos decisiones que salieron de los datos reales del 21/09/2026:
+ *
+ * 1. **Las tomas durante ejercicio se cuentan aparte.** Esa tarde: 4 tabletas
+ *    a las 19:30 con 134 mg/dL y dos flechas abajo terminaron en 97. Las
+ *    tabletas no subieron nada; frenaron una caída. Meterlas al mismo promedio
+ *    da "6.7 por tableta", un número en el que nadie debería apoyarse a las
+ *    tres de la mañana.
+ * 2. **Mediana, no promedio.** Con tres o cuatro eventos, un dato raro mueve
+ *    el promedio entero.
+ */
 export function subidaPorTableta(
-	eventos: { tabletas: number; glucosa: number | null; glucosa30: number | null }[]
-): { porTableta: number; eventos: number } | null {
+	eventos: { tabletas: number; glucosa: number | null; glucosa30: number | null; contexto: string }[]
+): { porTableta: number; eventos: number; enEjercicio: number } | null {
 	const utiles = eventos.filter(
 		(e) => e.glucosa !== null && e.glucosa30 !== null && e.tabletas > 0
 	);
-	if (!utiles.length) return null;
-	const suma = utiles.reduce((s, e) => s + (e.glucosa30! - e.glucosa!) / e.tabletas, 0);
-	return { porTableta: suma / utiles.length, eventos: utiles.length };
+	const reposo = utiles.filter((e) => e.contexto !== 'ejercicio');
+	if (!reposo.length) return null;
+	const v = reposo.map((e) => (e.glucosa30! - e.glucosa!) / e.tabletas).sort((a, b) => a - b);
+	const m = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+	return { porTableta: m, eventos: reposo.length, enEjercicio: utiles.length - reposo.length };
 }
