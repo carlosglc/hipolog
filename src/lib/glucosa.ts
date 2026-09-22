@@ -57,6 +57,39 @@ export function flechaDe(trend: unknown): string {
 	return trend;
 }
 
+/**
+ * Tendencia calculada de las propias lecturas, para cuando CareLink manda
+ * `lastSGTrend: "NONE"` (que es justo lo que mandaba la noche del 21/09/2026).
+ *
+ * Es la pendiente en mg/dL por minuto sobre los últimos ~15 minutos, con los
+ * cortes de siempre: menos de 1 es plano, 1–2 una flecha, 2–3 dos, 3 o más
+ * tres. Va marcada como calculada en la UI: no es lo que dice tu bomba, es lo
+ * que dicen tus últimas tres lecturas.
+ */
+export function tendenciaCalculada(
+	lecturas: Lectura[],
+	ventanaMin = 16
+): { flecha: string; porMinuto: number } | null {
+	if (lecturas.length < 2) return null;
+	const fin = lecturas.at(-1)!;
+	// La lectura más vieja que siga dentro de la ventana, en el mismo día o el
+	// anterior (la ventana de 24 h cruza medianoche).
+	let ini: Lectura | null = null;
+	for (let i = lecturas.length - 2; i >= 0; i--) {
+		const l = lecturas[i];
+		const dt = l.fecha === fin.fecha ? fin.minutos - l.minutos : fin.minutos + 1440 - l.minutos;
+		if (dt > ventanaMin) break;
+		ini = l;
+	}
+	if (!ini) return null;
+	const dt = ini.fecha === fin.fecha ? fin.minutos - ini.minutos : fin.minutos + 1440 - ini.minutos;
+	if (dt <= 0) return null;
+	const r = (fin.sg - ini.sg) / dt;
+	const a = Math.abs(r);
+	const n = a >= 3 ? 3 : a >= 2 ? 2 : a >= 1 ? 1 : 0;
+	return { flecha: n === 0 ? '→' : (r > 0 ? '↑' : '↓').repeat(n), porMinuto: r };
+}
+
 export function nivel(sg: number | null): 'bajo' | 'rango' | 'alto' | 'sin' {
 	if (sg === null) return 'sin';
 	if (sg < LIMITE_BAJO) return 'bajo';

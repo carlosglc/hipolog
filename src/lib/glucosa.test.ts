@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	aMinutos, flechaDe, masCercana, nivel, normalizarLecturas, partirTimestamp, subidaPorTableta
+	aMinutos, flechaDe, masCercana, nivel, normalizarLecturas, partirTimestamp, subidaPorTableta,
+	tendenciaCalculada
 } from './glucosa.ts';
 
 test('sg = 0 es un hueco, no un cero', () => {
@@ -67,4 +68,29 @@ test('sin eventos en reposo no se inventa un número', () => {
 		null
 	);
 	assert.equal(subidaPorTableta([{ tabletas: 2, glucosa: null, glucosa30: null, contexto: '' }]), null);
+});
+
+test('la tendencia calculada usa la pendiente de los últimos minutos', () => {
+	const serie = (valores: number[]) =>
+		normalizarLecturas(
+			valores.map((sg, i) => ({ sg, timestamp: `2026-09-21T23:${String(10 + i * 5).padStart(2, '0')}:00` }))
+		);
+	// 15 mg/dL en 15 min = 1 por minuto → una flecha
+	assert.equal(tendenciaCalculada(serie([100, 105, 110, 115]))?.flecha, '↑');
+	// 45 en 15 min = 3 por minuto → tres flechas abajo
+	assert.equal(tendenciaCalculada(serie([145, 130, 115, 100]))?.flecha, '↓↓↓');
+	// casi plano
+	assert.equal(tendenciaCalculada(serie([120, 121, 120, 122]))?.flecha, '→');
+	assert.equal(tendenciaCalculada([]), null);
+});
+
+test('la ventana de la tendencia cruza la medianoche sin romperse', () => {
+	const l = normalizarLecturas([
+		{ sg: 120, timestamp: '2026-09-21T23:50:00' },
+		{ sg: 110, timestamp: '2026-09-21T23:55:00' },
+		{ sg: 100, timestamp: '2026-09-22T00:00:00' }
+	]);
+	const t = tendenciaCalculada(l);
+	assert.equal(t?.flecha, '↓↓');
+	assert.ok(Math.abs(t!.porMinuto + 2) < 1e-9); // −2 mg/dL por minuto
 });

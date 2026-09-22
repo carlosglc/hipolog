@@ -4,7 +4,7 @@ import * as db from '$lib/server/db';
 import { resumir } from '$lib/resumen';
 import { ahora, hoy } from '$lib/fechas';
 import { leerCarelink } from '$lib/server/carelink';
-import { aMinutos, masCercana, nivel, subidaPorTableta, type Lectura } from '$lib/glucosa';
+import { aMinutos, masCercana, nivel, subidaPorTableta, tendenciaCalculada, type Lectura } from '$lib/glucosa';
 import type { Toma } from '$lib/tipos';
 
 const num = (v: FormDataEntryValue | null) => {
@@ -33,7 +33,15 @@ export const load: PageServerLoad = async () => {
 		resumen: resumir(tomas, compras, carbs),
 		tabletasPorFrasco: Number(db.ajuste('tabletas_por_frasco', '10')) || 10,
 		ahora: ahora(),
-		sensor: estado && { sg: estado.sg, flecha: estado.flecha, hora: estado.hora, fecha: estado.fecha, nivel: nivel(estado.sg) },
+		sensor: estado && {
+			sg: estado.sg,
+			flecha: estado.flecha,
+			hora: estado.hora,
+			fecha: estado.fecha,
+			nivel: nivel(estado.sg),
+			// Si CareLink manda NONE, la sacamos de las lecturas.
+			calculada: estado.flecha ? null : tendenciaCalculada(estado.lecturas)
+		},
 		curva,
 		subida: subidaPorTableta(db.tomas())
 	};

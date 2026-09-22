@@ -76,6 +76,33 @@
 
 	/** Las pastillas se salen del marco si la toma cae en el borde. */
 	const dentro = (n: number) => Math.min(96, Math.max(4, n));
+	/** El globo es más ancho que una pastilla y necesita más margen. */
+	const dentroGlobo = (n: number) => Math.min(90, Math.max(10, n));
+
+	// Punto actual y sonda: el dedo o el cursor sobre la gráfica muestra el
+	// valor de esa lectura. pointer* cubre mouse y touch con el mismo código.
+	let sonda = $state<{ x: number; sg: number; hora: string } | null>(null);
+	const actual = $derived(data.curva?.puntos.at(-1) ?? null);
+	const mostrado = $derived(sonda ?? actual);
+	const flechaAhora = $derived(data.sensor?.flecha || data.sensor?.calculada?.flecha || '');
+	const flechaCalculada = $derived(!data.sensor?.flecha && !!data.sensor?.calculada);
+
+	function sondear(e: PointerEvent) {
+		const c = data.curva;
+		if (!c) return;
+		const caja = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const pct = ((e.clientX - caja.left) / caja.width) * 100;
+		let mejor = null;
+		let dist = Infinity;
+		for (const p of c.puntos) {
+			const d = Math.abs(px(p.x) - pct);
+			if (d < dist) {
+				dist = d;
+				mejor = p;
+			}
+		}
+		sonda = mejor;
+	}
 
 	// Hace cuánto llegó la última lectura, sin construir Dates.
 	const minutosDesdeLectura = $derived.by(() => {
@@ -162,7 +189,12 @@
 			<div class="tile sensor {data.sensor.nivel}">
 				<span class="etiqueta">Ahora</span>
 				<strong class="hero">
-					{data.sensor.sg ?? '—'}<span class="flecha-sensor">{data.sensor.flecha}</span>
+					{data.sensor.sg ?? '—'}<span
+						class="flecha-sensor"
+						class:calc={flechaCalculada}
+						title={flechaCalculada
+							? `calculada de tus lecturas (${data.sensor.calculada?.porMinuto.toFixed(1)} mg/dL por minuto)`
+							: 'tendencia del sensor'}>{flechaAhora}</span>
 				</strong>
 				<span class="pie">
 					mg/dL · {minutosDesdeLectura === null
@@ -216,7 +248,13 @@
 	{#if data.curva && segmentos.length}
 		<section class="tarjeta">
 			<h2>Glucosa <small>últimas 24 h, con tus tomas encima</small></h2>
-			<div class="curva-caja">
+			<div
+				class="curva-caja"
+				onpointermove={sondear}
+				onpointerdown={sondear}
+				onpointerleave={() => (sonda = null)}
+				role="presentation"
+			>
 				<svg class="curva" viewBox="0 0 100 100" preserveAspectRatio="none" role="img"
 					aria-label="Curva de glucosa de las últimas 24 horas con marcas donde tomaste tabletas">
 					<rect x="0" y={py(LIMITE_BAJO)} width="100" height={100 - py(LIMITE_BAJO)} class="zona-baja" />
@@ -239,6 +277,24 @@
 					<span class="pastilla" style="left: {dentro(px(m.x))}%"
 						title="{m.hora}: {decimal(m.tabletas)} tabletas">+{decimal(m.tabletas)}</span>
 				{/each}
+
+				{#if sonda}
+					<span class="cruz" style="left: {px(sonda.x)}%"></span>
+				{/if}
+				{#if mostrado}
+					<span class="punto" class:sondeando={!!sonda}
+						style="left: {px(mostrado.x)}%; top: {py(mostrado.sg)}%"></span>
+					<span class="globo" style="left: {dentroGlobo(px(mostrado.x))}%; top: {py(mostrado.sg)}%">
+						<b>{mostrado.sg}</b>
+						{#if sonda}
+							<span class="globo-sub">{mostrado.hora}</span>
+						{:else if flechaAhora}
+							<span class="globo-sub" class:calc={flechaCalculada}
+								title={flechaCalculada ? 'calculada de tus últimas lecturas' : 'del sensor'}
+							>{flechaAhora}</span>
+						{/if}
+					</span>
+				{/if}
 			</div>
 			<div class="eje-x">
 				{#each marcasHora as t (t.x)}
@@ -660,6 +716,9 @@
 		position: relative;
 		height: 150px;
 		margin-top: 8px;
+		/* pan-y deja que la página siga haciendo scroll vertical mientras el
+		   dedo se arrastra de lado sobre la gráfica. */
+		touch-action: pan-y;
 	}
 	@media (min-width: 900px) {
 		.curva-caja {
@@ -726,6 +785,57 @@
 		padding: 2px 7px;
 		white-space: nowrap;
 	}
+	/* Punto actual, sonda y globo de valor */
+	.punto {
+		position: absolute;
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: var(--acento);
+		transform: translate(-50%, -50%);
+		box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px color-mix(in srgb, var(--acento) 35%, transparent);
+		pointer-events: none;
+	}
+	.punto.sondeando {
+		background: var(--ink);
+		box-shadow: 0 0 0 3px var(--surface);
+	}
+	.cruz {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		width: 1px;
+		background: var(--ink-3);
+		opacity: 0.5;
+		pointer-events: none;
+	}
+	.globo {
+		position: absolute;
+		transform: translate(-50%, -190%);
+		background: var(--ink);
+		color: var(--bg);
+		border-radius: 8px;
+		padding: 3px 8px;
+		font-size: 0.78rem;
+		white-space: nowrap;
+		pointer-events: none;
+		display: flex;
+		align-items: baseline;
+		gap: 5px;
+	}
+	.globo b {
+		font-size: 0.95rem;
+	}
+	.globo-sub {
+		opacity: 0.75;
+	}
+	/* Una flecha calculada no se dibuja igual que una del sensor. */
+	.globo-sub.calc,
+	.flecha-sensor.calc {
+		opacity: 0.6;
+		font-style: italic;
+	}
+
 	.eje-x {
 		position: relative;
 		height: 16px;
