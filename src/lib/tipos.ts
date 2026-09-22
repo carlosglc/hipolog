@@ -5,6 +5,7 @@ export type Toma = {
 	tabletas: number;
 	contexto: string;
 	glucosa: number | null; // mg/dL al momento de la toma, opcional
+	glucosa30: number | null; // mg/dL 30 min después: si las tabletas alcanzaron
 	tendencia: string; // flechas del sensor: '↓', '↓↓', '↓↓↓', '→'
 	nota: string;
 };

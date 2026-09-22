@@ -13,10 +13,12 @@ services:
     environment:
       ORIGIN: "http://homie-lab.local:8477" # adapter-node valida el origen de los POST
       TZ: "America/Mexico_City"
-      # Integración opcional con glucose-pipeline: mientras no exista su
-      # REST API, esto se queda comentado y la app funciona igual.
-      # GLUCOSA_URL: "http://homie-lab.local:8478/glucose/current"
-      # GLUCOSA_TIMEOUT_MS: "1500"
+      # Sensor: el proxy REST de carelink-python-client
+      # (carelink_client2_proxy.py, puerto 8081). Descoméntalo cuando ese
+      # proceso corra en el homelab. Sin esto, hipolog funciona igual,
+      # nomás sin curva ni glucosa automática.
+      # CARELINK_URL: "http://homie-lab.local:8081"
+      # CARELINK_TIMEOUT_MS: "2500"
     volumes:
       - hipolog-datos:/datos
 

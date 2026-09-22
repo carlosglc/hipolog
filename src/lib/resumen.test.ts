@@ -4,7 +4,7 @@ import { resumir } from './resumen.ts';
 import type { Compra, Toma } from './tipos.ts';
 
 const toma = (fecha: string, hora: string, tabletas: number, contexto = ''): Toma => ({
-	id: 0, fecha, hora, tabletas, contexto, glucosa: null, tendencia: '', nota: ''
+	id: 0, fecha, hora, tabletas, contexto, glucosa: null, glucosa30: null, tendencia: '', nota: ''
 });
 const compra = (fecha: string, tabletas: number, costo = 0): Compra => ({
 	id: 0, fecha, tabletas, costo, marca: ''

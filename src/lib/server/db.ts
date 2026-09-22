@@ -34,6 +34,15 @@ db.exec(`
 	CREATE TABLE IF NOT EXISTS ajustes (clave TEXT PRIMARY KEY, valor TEXT NOT NULL);
 `);
 
+// Migración: la columna llegó después de las primeras tomas. Guarda la
+// glucosa 30 min DESPUÉS de la toma, que es lo que dice si las tabletas
+// alcanzaron. CareLink solo conserva 24 h, así que si no se copia aquí,
+// ese dato se pierde para siempre.
+const columnas = db.prepare('PRAGMA table_info(tomas)').all() as unknown as { name: string }[];
+if (!columnas.some((c) => c.name === 'glucosa30')) {
+	db.exec('ALTER TABLE tomas ADD COLUMN glucosa30 INTEGER');
+}
+
 export function ajuste(clave: string, porDefecto: string): string {
 	const fila = db.prepare('SELECT valor FROM ajustes WHERE clave = ?').get(clave) as
 		| { valor: string }
@@ -54,7 +63,7 @@ export function tomas(): Toma[] {
 }
 
 /** Devuelve el id insertado, para poder completarlo después con la glucosa. */
-export function agregarToma(t: Omit<Toma, 'id'>): number {
+export function agregarToma(t: Omit<Toma, 'id' | 'glucosa30'>): number {
 	const res = db.prepare(
 		`INSERT INTO tomas (fecha, hora, tabletas, contexto, glucosa, tendencia, nota, creado)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -69,6 +78,16 @@ export function agregarToma(t: Omit<Toma, 'id'>): number {
 		new Date().toISOString()
 	);
 	return Number(res.lastInsertRowid);
+}
+
+/** Completa una toma con lo que dijo el sensor. Solo rellena lo que falta. */
+export function completarGlucosa(id: number, glucosa: number | null, glucosa30: number | null): void {
+	db.prepare(
+		`UPDATE tomas
+		    SET glucosa   = COALESCE(glucosa, ?),
+		        glucosa30 = COALESCE(glucosa30, ?)
+		  WHERE id = ?`
+	).run(glucosa, glucosa30, id);
 }
 
 export function borrarToma(id: number): void {

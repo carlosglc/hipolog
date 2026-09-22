@@ -30,31 +30,74 @@ de contexto y flechas son opcionales y se tocan *antes* del botón.
 Para registrar algo después, `Otra hora, glucosa o nota` abre fecha, hora,
 glucosa, cantidad libre (acepta medias tabletas) y nota.
 
-## Integración con glucose-pipeline (opcional, apagada)
+## El sensor (opcional, apagada por default)
 
-Revisé `~/Projects/glucose-pipeline` antes de depender de él:
+Con `CARELINK_URL` apuntando al proxy REST de
+`carelink-python-client` (`carelink_client2_proxy.py`, puerto 8081), hipolog
+agrega tres cosas:
 
-- **No hay REST API todavía.** `api/`, `core/`, `adapters/`, `ingest/` y `cli/`
-  contienen solo `.gitkeep`, y el README marca `[ ] REST API` sin palomear.
-- Lo único que corre es `mcp/server.py`: un servidor **MCP por stdio** que
-  consulta CareLink en vivo (caché de 120 s). No escucha en un puerto, así que
-  no hay nada que un contenedor de Node pueda llamar por HTTP.
-- La forma que sí existe es la que devuelve su herramienta
-  `get_current_glucose()`: `{ glucose_mgdl, reading_time, trend, timezone,
-  active_insulin_units, smartguard, pump_suspended, sensor_ok,
-  sensor_age_hours, reservoir_units }`. `trend` viene de `lastSGTrend` de
-  CareLink, **cadena cruda del vendor** — el enum real no está documentado en
-  ese repo.
+1. **Tile "Ahora"**: glucosa y flecha del momento, en verde/rojo/ámbar según
+   el rango, con hace cuánto llegó la lectura.
+2. **Curva de 24 h con tus tomas encima**: un solo eje, la glucosa; las tomas
+   son marcas verticales. Lo que pasa *después* de cada marca es la respuesta
+   a si las tabletas alcanzaron.
+3. **"Cada tableta sube X mg/dL"**: promedio real medido a los 30 minutos.
 
-Así que `src/lib/server/glucosa.ts` no inventa un endpoint: queda inerte salvo
-que definas `GLUCOSA_URL`. Si la defines, espera esas mismas llaves
-(`glucose_mgdl`, `trend`), con 1.5 s de timeout, en segundo plano y dentro de un
-`try/catch`: **el evento se guarda primero y la glucosa se adjunta después, si
-llega**. Si el API no está, tarda o responde raro, el registro queda igual y en
-la UI no pasa nada.
+### Por qué importa persistirlo aquí
 
-`trend` se guarda tal cual. Cuando conozcas los valores reales, mapéalos en la
-constante `FLECHAS` de ese archivo y se verán como flechas.
+CareLink solo expone ~24 h y `glucose-pipeline` todavía no persiste nada
+(`[ ] Schema and persistence`). Si nadie copia la curva alrededor de una
+hipoglucemia, ese dato **se pierde**. hipolog guarda por evento la glucosa del
+momento y la de 30 minutos después (`glucosa`, `glucosa30`), así que el
+historial se conserva aunque el sensor ya no lo tenga.
+
+El relleno se hace **al cargar la página**, no con un temporizador: si el
+contenedor se reinicia, en la siguiente visita se recupera solo, porque la
+ventana de 24 h del proxy alcanza cualquier toma del día.
+
+### De dónde salió el shape (no lo adiviné)
+
+- `glucose-pipeline` **no tiene REST API**: `api/`, `core/`, `ingest/` y `cli/`
+  solo tienen `.gitkeep`, y su README marca `[ ] REST API`. Lo único que corre
+  ahí es `mcp/server.py`, un servidor MCP **por stdio** — nada que llamar por
+  HTTP.
+- El REST que sí existe es el de upstream, `carelink_client2_proxy.py`:
+  `GET /carelink/` (payload completo, con `sgs`) y `GET /carelink/nohistory`.
+  Baja de CareLink cada 300 s y sirve de memoria, así que consultarlo es
+  barato.
+- Los campos salieron de los volcados reales en
+  `~/Projects/carelink-python-client/data-2026*.json`:
+  `lastSG = {kind, version, sg, sensorState, timestamp}`, `sgs[]` con 288
+  lecturas de 24 h, `lastSGTrend`, y `markers` con
+  `INSULIN / MEAL / LOW_GLUCOSE_SUSPENDED / AUTO_BASAL_DELIVERY`.
+- `sg: 0` **no es cero**, es "todavía no hay lectura": se normaliza a `null` en
+  un solo lugar (`src/lib/glucosa.ts`), igual que hace el MCP.
+- Los `timestamp` son ISO **naive y ya locales** (`2026-09-10T22:47:31`): se
+  parten con una expresión regular, nunca con `new Date(iso)`.
+- De `lastSGTrend` solo observé `'UP'` y `'DOWN'` en los volcados. Las flechas
+  se deducen del patrón del nombre (`…_DOUBLE`, `…_TRIPLE`) y **lo que no se
+  reconoce se muestra crudo**: mejor una cadena rara visible que una flecha
+  equivocada.
+
+### Si el sensor no está
+
+Sin `CARELINK_URL`, o si el proxy no responde, o tarda, o contesta raro: la
+lectura devuelve `null`, no se dibuja la curva, no aparece el tile, y **el
+registro de tabletas funciona exactamente igual**. Ningún tap espera a la red:
+la glucosa se copia después, en el siguiente load.
+
+### Para que funcione en el homelab
+
+El proxy necesita correr en algún lado con el `logindata.json` de CareLink:
+
+```bash
+# en el homelab, junto a carelink-python-client
+python3 carelink_client2_proxy.py   # escucha en 0.0.0.0:8081
+```
+
+Ojo: ese proxy **no tiene autenticación** (su propio código dice
+`# Security checks (if any) / TODO`) y manda `Access-Control-Allow-Origin: *`.
+Déjalo solo en la LAN.
 
 ## Deploy (homie-lab.local, Docker)
 

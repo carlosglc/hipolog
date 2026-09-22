@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { etiquetaLarga, franja } from '$lib/fechas';
 	import { CONTEXTOS, TENDENCIAS } from '$lib/tipos';
+	import { aMinutos, LIMITE_ALTO, LIMITE_BAJO } from '$lib/glucosa';
 	import type { Toma } from '$lib/tipos';
 
 	let { data, form } = $props();
@@ -19,6 +20,55 @@
 			return acc;
 		}, [])
 	);
+
+	// --- Curva de 24 h -------------------------------------------------
+	// Un solo eje: la glucosa. Las tomas NO son una segunda escala, son
+	// marcas verticales sobre el mismo eje de tiempo.
+	const V = { w: 400, h: 190, arriba: 20, abajo: 26 };
+	const SG_MIN = 40;
+	const SG_MAX = 320;
+	const py = (sg: number) => {
+		const v = Math.min(SG_MAX, Math.max(SG_MIN, sg));
+		return V.arriba + (V.h - V.arriba - V.abajo) * (1 - (v - SG_MIN) / (SG_MAX - SG_MIN));
+	};
+	const px = (x: number, c: { x0: number; x1: number }) =>
+		((x - c.x0) / Math.max(1, c.x1 - c.x0)) * V.w;
+
+	// Un hueco del sensor se dibuja como hueco, no como una recta que lo cruza.
+	const segmentos = $derived.by(() => {
+		const c = data.curva;
+		if (!c) return [];
+		const out: string[] = [];
+		let actual: string[] = [];
+		let previo = -Infinity;
+		for (const p of c.puntos) {
+			if (p.x - previo > 15 && actual.length) {
+				out.push(actual.join(' '));
+				actual = [];
+			}
+			actual.push(`${px(p.x, c).toFixed(1)},${py(p.sg).toFixed(1)}`);
+			previo = p.x;
+		}
+		if (actual.length) out.push(actual.join(' '));
+		return out;
+	});
+
+	const marcasHora = $derived.by(() => {
+		const c = data.curva;
+		if (!c) return [];
+		const t: { x: number; etiqueta: string }[] = [];
+		for (let m = Math.ceil(c.x0 / 360) * 360; m <= c.x1; m += 360) {
+			t.push({ x: px(m, c), etiqueta: `${String(Math.floor((m % 1440) / 60)).padStart(2, '0')}h` });
+		}
+		return t;
+	});
+
+	// Hace cuánto llegó la última lectura, sin construir Dates.
+	const minutosDesdeLectura = $derived.by(() => {
+		if (!data.sensor) return null;
+		const d = aMinutos(data.ahora) - aMinutos(data.sensor.hora);
+		return d < 0 ? d + 1440 : d;
+	});
 
 	const pesos = (n: number) =>
 		n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
@@ -92,6 +142,21 @@
 
 	<!-- INVENTARIO ------------------------------------------------------ -->
 	<section class="tiles">
+		{#if data.sensor}
+			<div class="tile sensor {data.sensor.nivel}">
+				<span class="etiqueta">Ahora</span>
+				<strong class="hero">
+					{data.sensor.sg ?? '—'}<span class="flecha-sensor">{data.sensor.flecha}</span>
+				</strong>
+				<span class="pie">
+					mg/dL · {minutosDesdeLectura === null
+						? data.sensor.hora
+						: minutosDesdeLectura < 2
+							? 'recién'
+							: `hace ${minutosDesdeLectura} min`}
+				</span>
+			</div>
+		{/if}
 		<div class="tile destacado">
 			<span class="etiqueta">Quedan</span>
 			<strong class="hero">{decimal(r.existencias)}</strong>
@@ -109,6 +174,14 @@
 			<strong>{decimal(r.porSemana)}</strong>
 			<span class="pie">por semana · {decimal(r.porDia)}/día ({r.ventana} d)</span>
 		</div>
+		{#if data.subida}
+			<div class="tile">
+				<span class="etiqueta">Cada tableta sube</span>
+				<strong>+{Math.round(data.subida.porTableta)}</strong>
+				<span class="pie">mg/dL a los 30 min · {data.subida.eventos}
+					{data.subida.eventos === 1 ? 'evento medido' : 'eventos medidos'}</span>
+			</div>
+		{/if}
 		<div class="tile">
 			<span class="etiqueta">Costo</span>
 			<strong>{r.costoMensual === null ? '—' : pesos(r.costoMensual)}</strong>
@@ -117,6 +190,42 @@
 			</span>
 		</div>
 	</section>
+
+	<!-- CURVA DE 24 H ---------------------------------------------------- -->
+	{#if data.curva && segmentos.length}
+		<section class="tarjeta">
+			<h2>Glucosa <small>últimas 24 h, con tus tomas encima</small></h2>
+			<svg class="curva" viewBox="0 0 {V.w} {V.h}" role="img"
+				aria-label="Curva de glucosa de las últimas 24 horas con marcas donde tomaste tabletas">
+				<!-- zona baja: donde las tabletas hacen falta -->
+				<rect x="0" y={py(LIMITE_BAJO)} width={V.w} height={py(SG_MIN) - py(LIMITE_BAJO)} class="zona-baja" />
+				<line x1="0" x2={V.w} y1={py(LIMITE_BAJO)} y2={py(LIMITE_BAJO)} class="limite bajo" />
+				<line x1="0" x2={V.w} y1={py(LIMITE_ALTO)} y2={py(LIMITE_ALTO)} class="limite" />
+				<text x="4" y={py(LIMITE_BAJO) - 4} class="limite-txt">{LIMITE_BAJO}</text>
+				<text x="4" y={py(LIMITE_ALTO) - 4} class="limite-txt">{LIMITE_ALTO}</text>
+
+				{#each marcasHora as t (t.x)}
+					<text x={t.x} y={V.h - 6} class="hora-txt" text-anchor="middle">{t.etiqueta}</text>
+				{/each}
+
+				{#each data.curva.marcas as m (m.id)}
+					<line x1={px(m.x, data.curva)} x2={px(m.x, data.curva)} y1={V.arriba} y2={V.h - V.abajo} class="marca-toma" />
+					<g transform="translate({px(m.x, data.curva)}, {V.arriba})">
+						<rect x="-14" y="-15" width="28" height="18" rx="9" class="marca-pill" />
+						<text x="0" y="-2" text-anchor="middle" class="marca-txt">+{decimal(m.tabletas)}</text>
+					</g>
+				{/each}
+
+				{#each segmentos as d, i (i)}
+					<polyline points={d} class="linea" />
+				{/each}
+			</svg>
+			<p class="pie">
+				Cada marca es una toma. Lo que pasa después de la marca es la respuesta a
+				si alcanzaron.
+			</p>
+		</section>
+	{/if}
 
 	<!-- ÚLTIMOS 14 DÍAS -------------------------------------------------- -->
 	<section class="tarjeta">
@@ -162,7 +271,7 @@
 						<span class="cantidad">{decimal(t.tabletas)} × {r.carbsPorTableta} g</span>
 						<span class="meta">
 							{#if t.tendencia}<b class="flecha">{t.tendencia}</b>{/if}
-							{#if t.glucosa}<b>{t.glucosa} mg/dL</b>{/if}
+							{#if t.glucosa}<b>{t.glucosa}{#if t.glucosa30}→{t.glucosa30}{/if} mg/dL</b>{/if}
 							{t.contexto || franja(t.hora)}{t.nota ? ` · ${t.nota}` : ''}
 						</span>
 						<form method="POST" action="?/borrar" use:enhance>
@@ -471,6 +580,73 @@
 	.pie {
 		font-size: 0.75rem;
 		color: var(--ink-3);
+	}
+
+	/* --- curva de 24 h --- */
+	.curva {
+		width: 100%;
+		height: auto;
+		display: block;
+		overflow: visible;
+	}
+	.linea {
+		fill: none;
+		stroke: var(--acento);
+		stroke-width: 2;
+		stroke-linejoin: round;
+		stroke-linecap: round;
+	}
+	.zona-baja {
+		fill: var(--malo);
+		opacity: 0.09;
+	}
+	.limite {
+		stroke: var(--line);
+		stroke-width: 1;
+		stroke-dasharray: 3 4;
+	}
+	.limite.bajo {
+		stroke: var(--malo);
+		opacity: 0.55;
+	}
+	.limite-txt,
+	.hora-txt {
+		fill: var(--ink-3);
+		font-size: 12px;
+	}
+	.marca-toma {
+		stroke: var(--ink-3);
+		stroke-width: 1;
+		stroke-dasharray: 2 3;
+		opacity: 0.7;
+	}
+	.marca-pill {
+		fill: var(--acento);
+	}
+	.marca-txt {
+		fill: var(--acento-ink);
+		font-size: 11px;
+		font-weight: 700;
+	}
+
+	/* --- tile del sensor --- */
+	.tile.sensor .hero {
+		font-size: 2.4rem;
+		line-height: 1.05;
+	}
+	.tile.sensor.rango .hero {
+		color: var(--bien);
+	}
+	.tile.sensor.bajo .hero {
+		color: var(--malo);
+	}
+	.tile.sensor.alto .hero {
+		color: #c98500;
+	}
+	.flecha-sensor {
+		font-size: 1.4rem;
+		margin-left: 4px;
+		color: var(--ink-2);
 	}
 
 	/* --- barras --- */
