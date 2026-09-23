@@ -123,27 +123,58 @@ export function masCercana(
 }
 
 /**
- * Cuánto sube cada tableta, en mg/dL a los 30 minutos.
+ * Cuánto te sube cada fuente de rescate, normalizado a **15 g de
+ * carbohidratos** — la ración de referencia para corregir una hipoglucemia.
+ *
+ * Los gramos son lo único comparable entre un jugo y una tableta, y por eso
+ * son la unidad: así se puede contestar si el jugo levanta más que las
+ * tabletas, que con la cuenta en tabletas era imposible.
  *
  * Dos decisiones que salieron de los datos reales del 21/09/2026:
  *
- * 1. **Las tomas durante ejercicio se cuentan aparte.** Esa tarde: 4 tabletas
+ * 1. **Solo cuentan los rescates**, y **las tomas durante ejercicio se
+ *    cuentan aparte.** Esa tarde: 4 tabletas
  *    a las 19:30 con 134 mg/dL y dos flechas abajo terminaron en 97. Las
  *    tabletas no subieron nada; frenaron una caída. Meterlas al mismo promedio
- *    da "6.7 por tableta", un número en el que nadie debería apoyarse a las
- *    tres de la mañana.
+ *    da un número en el que nadie debería apoyarse a las tres de la mañana.
  * 2. **Mediana, no promedio.** Con tres o cuatro eventos, un dato raro mueve
  *    el promedio entero.
  */
-export function subidaPorTableta(
-	eventos: { tabletas: number; glucosa: number | null; glucosa30: number | null; contexto: string }[]
-): { porTableta: number; eventos: number; enEjercicio: number } | null {
+export function subidaPorFuente(
+	eventos: {
+		gramos: number;
+		fuente: string;
+		proposito: string;
+		glucosa: number | null;
+		glucosa30: number | null;
+		contexto: string;
+	}[]
+): { fuentes: { fuente: string; por15g: number; eventos: number }[]; enEjercicio: number } | null {
+	// Solo rescates: "cuánto me sube" solo tiene sentido partiendo de una baja.
+	// Un gel tomado en 160 mg/dL para no bajar mide otra cosa por completo.
 	const utiles = eventos.filter(
-		(e) => e.glucosa !== null && e.glucosa30 !== null && e.tabletas > 0
+		(e) =>
+			e.glucosa !== null &&
+			e.glucosa30 !== null &&
+			e.gramos > 0 &&
+			e.proposito === 'rescate'
 	);
 	const reposo = utiles.filter((e) => e.contexto !== 'ejercicio');
 	if (!reposo.length) return null;
-	const v = reposo.map((e) => (e.glucosa30! - e.glucosa!) / e.tabletas).sort((a, b) => a - b);
-	const m = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
-	return { porTableta: m, eventos: reposo.length, enEjercicio: utiles.length - reposo.length };
+
+	const porFuente = new Map<string, number[]>();
+	for (const e of reposo) {
+		const subida = ((e.glucosa30! - e.glucosa!) / e.gramos) * 15;
+		porFuente.set(e.fuente, [...(porFuente.get(e.fuente) ?? []), subida]);
+	}
+
+	const fuentes = [...porFuente.entries()]
+		.map(([fuente, v]) => {
+			v.sort((a, b) => a - b);
+			const m = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+			return { fuente, por15g: m, eventos: v.length };
+		})
+		.sort((a, b) => b.eventos - a.eventos);
+
+	return { fuentes, enEjercicio: utiles.length - reposo.length };
 }

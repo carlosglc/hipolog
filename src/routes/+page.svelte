@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { etiquetaLarga, franja } from '$lib/fechas';
-	import { CONTEXTOS, TENDENCIAS } from '$lib/tipos';
+	import { CAFEINA_SIN_DATO, CONTEXTOS, TABLETA, TENDENCIAS } from '$lib/tipos';
 	import { aMinutos, LIMITE_ALTO, LIMITE_BAJO } from '$lib/glucosa';
 	import type { Toma } from '$lib/tipos';
 
 	let { data, form } = $props();
 
 	const r = $derived(data.resumen);
-	const maxBarra = $derived(Math.max(1, ...r.serie.map((d) => d.tabletas)));
+	const maxBarra = $derived(Math.max(1, ...r.serie.map((d) => d.gramos)));
 
 	// El historial se agrupa por día; la lista plana es la "vista de tabla" del
 	// mismo dato que dibuja la gráfica de arriba.
@@ -76,6 +76,23 @@
 
 	/** Las pastillas se salen del marco si la toma cae en el borde. */
 	const dentro = (n: number) => Math.min(96, Math.max(4, n));
+	// Tres Gu en 20 minutos dan tres pastillas encimadas. Las que caen a menos
+	// de 8% de ancho de la anterior bajan un renglón, hasta tres niveles.
+	const marcasApiladas = $derived.by(() => {
+		const c = data.curva;
+		if (!c) return [];
+		const orden = [...c.marcas].sort((a, b) => a.x - b.x);
+		const ult: number[] = [];
+		return orden.map((m) => {
+			const pos = px(m.x);
+			let nivel = 0;
+			while (nivel < 2 && ult[nivel] !== undefined && pos - ult[nivel] < 8) nivel++;
+			ult[nivel] = pos;
+			const etiqueta = m.fuente === TABLETA ? `+${decimal(m.tabletas)}` : `${decimal(m.gramos)}g`;
+			return { ...m, pos, nivel, etiqueta };
+		});
+	});
+
 	/** El globo es más ancho que una pastilla y necesita más margen. */
 	const dentroGlobo = (n: number) => Math.min(90, Math.max(10, n));
 
@@ -111,6 +128,24 @@
 		return d < 0 ? d + 1440 : d;
 	});
 
+	// La subida se mide en gramos, que es lo comparable entre un Gu y una
+	// tableta. El tile muestra la de las tabletas, que es la fuente frecuente.
+	const subidaTableta = $derived(data.subida?.fuentes.find((f) => f.fuente === 'tableta'));
+
+	// Si el panel «Otra hora» está abierto, cualquier botón usa su fecha y
+	// hora; cerrado, el servidor usa la hora real del tap. Ver momento().
+	let panelAbierto = $state(false);
+
+	// Qué fuente se está comprando: cambia los campos del formulario.
+	let fuenteCompra = $state(TABLETA);
+
+	/** «Gu Lemon Sublime» → { marca: 'Gu', sabor: 'Lemon Sublime' }. */
+	const partirNombre = (n: string) =>
+		n.startsWith('Gu ') ? { marca: 'Gu', sabor: n.slice(3) } : { marca: '', sabor: n };
+
+	const cafeinaTexto = (mg: number) =>
+		mg === CAFEINA_SIN_DATO ? 'con cafeína' : mg > 0 ? `${mg} mg cafeína` : '';
+
 	const pesos = (n: number) =>
 		n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
 	const decimal = (n: number) => n.toFixed(1).replace(/\.0$/, '');
@@ -123,8 +158,14 @@
 		<h1><span aria-hidden="true">🍬</span> hipolog</h1>
 		<p class="sub">
 			{#if r.hoyEventos}
-				Hoy: {decimal(r.hoyTabletas)} tabletas · {r.hoyTabletas * r.carbsPorTableta} g de carbos
-				en {r.hoyEventos} {r.hoyEventos === 1 ? 'evento' : 'eventos'}
+				Hoy: {decimal(r.hoyGramos)} g de carbos
+				{#if r.hoyRescates}· {r.hoyRescates} {r.hoyRescates === 1 ? 'rescate' : 'rescates'}{/if}
+				{#if r.hoyCombustible}· {r.hoyCombustible} de combustible{/if}
+				{#if r.hoyCafeina.mg || r.hoyCafeina.sinDato}
+					· cafeína {r.hoyCafeina.mg ? `${r.hoyCafeina.mg} mg` : ''}{r.hoyCafeina.sinDato
+						? `${r.hoyCafeina.mg ? ' + ' : ''}${r.hoyCafeina.sinDato} sin dato`
+						: ''}
+				{/if}
 			{:else}
 				Hoy no has registrado ninguna toma.
 			{/if}
@@ -136,6 +177,14 @@
 	<!-- REGISTRAR ------------------------------------------------------- -->
 	<section class="tarjeta registro">
 		<form method="POST" action="?/registrar" use:enhance>
+			<input type="hidden" name="detallado" value={panelAbierto ? '1' : '0'} />
+
+			<fieldset class="chips proposito">
+				<legend>¿Para qué?</legend>
+				<label class="chip"><input type="radio" name="proposito" value="rescate" checked /><span>Rescate · ya iba bajo</span></label>
+				<label class="chip"><input type="radio" name="proposito" value="combustible" /><span>Combustible · para no bajar</span></label>
+			</fieldset>
+
 			<fieldset class="chips">
 				<legend>¿Por qué?</legend>
 				<label class="chip"><input type="radio" name="contexto" value="" checked /><span>—</span></label>
@@ -163,8 +212,24 @@
 				{/each}
 			</div>
 
-			<details>
+			{#if data.fuentes.length}
+				<div class="presets">
+					{#each data.fuentes as f (f.id)}
+						{@const n = partirNombre(f.nombre)}
+						<button class="preset" formaction="?/registrarFuente" name="fuenteId" value={f.id}>
+							{#if n.marca}<small class="marca">{n.marca}</small>{/if}
+							<strong>{n.sabor}</strong>
+							<small>
+								{f.gramos} g{#if f.cafeina}<span class="cafe"> · {cafeinaTexto(f.cafeina)}</span>{/if}
+							</small>
+						</button>
+					{/each}
+				</div>
+			{/if}
+
+			<details bind:open={panelAbierto}>
 				<summary>Otra hora, glucosa o nota</summary>
+				<p class="pista-panel">Con este panel abierto, cualquier botón usa esta fecha y hora.</p>
 				<div class="rejilla">
 					<label>Fecha<input type="date" name="fecha" value={r.hoy} /></label>
 					<label>Hora<input type="time" name="hora" value={data.ahora} /></label>
@@ -222,13 +287,13 @@
 			<strong>{decimal(r.porSemana)}</strong>
 			<span class="pie">por semana · {decimal(r.porDia)}/día ({r.ventana} d)</span>
 		</div>
-		{#if data.subida}
+		{#if data.subida && subidaTableta}
 			<div class="tile">
-				<span class="etiqueta">Cada tableta sube</span>
-				<strong>+{Math.round(data.subida.porTableta)}</strong>
+				<span class="etiqueta">15 g te suben</span>
+				<strong>+{Math.round(subidaTableta?.por15g ?? 0)}</strong>
 				<span class="pie">
-					mg/dL a los 30 min, en reposo · {data.subida.eventos}
-					{data.subida.eventos === 1 ? 'evento' : 'eventos'}{#if data.subida.enEjercicio}{' '}·
+					mg/dL a los 30 min, en reposo · {subidaTableta?.eventos ?? 0}
+					{subidaTableta?.eventos === 1 ? 'rescate' : 'rescates'}{#if data.subida.enEjercicio}{' '}·
 						{data.subida.enEjercicio} en ejercicio aparte{/if}
 				</span>
 			</div>
@@ -273,9 +338,14 @@
 
 				<span class="guia" style="top: {py(LIMITE_ALTO)}%">{LIMITE_ALTO}</span>
 				<span class="guia" style="top: {py(LIMITE_BAJO)}%">{LIMITE_BAJO}</span>
-				{#each data.curva.marcas as m (m.id)}
-					<span class="pastilla" style="left: {dentro(px(m.x))}%"
-						title="{m.hora}: {decimal(m.tabletas)} tabletas">+{decimal(m.tabletas)}</span>
+				{#each marcasApiladas as m (m.id)}
+					<span
+						class="pastilla"
+						class:comb={m.proposito === 'combustible'}
+						class:otra={m.fuente !== TABLETA}
+						style="left: {dentro(m.pos)}%; top: {m.nivel * 19}px"
+						title="{m.hora}: {m.fuente === TABLETA ? `${decimal(m.tabletas)} tabletas` : m.fuente} · {decimal(m.gramos)} g{m.proposito === 'combustible' ? ' · combustible' : ''}"
+					>{m.etiqueta}</span>
 				{/each}
 
 				{#if sonda}
@@ -284,7 +354,13 @@
 				{#if mostrado}
 					<span class="punto" class:sondeando={!!sonda}
 						style="left: {px(mostrado.x)}%; top: {py(mostrado.sg)}%"></span>
-					<span class="globo" style="left: {dentroGlobo(px(mostrado.x))}%; top: {py(mostrado.sg)}%">
+					<!-- El valor actual va a la IZQUIERDA del punto: arriba chocaría con
+					     las pastillas de las tomas recientes, que viven en la misma orilla. -->
+					<span
+						class="globo"
+						class:actual={!sonda}
+						style="left: {sonda ? dentroGlobo(px(mostrado.x)) : px(mostrado.x)}%; top: {py(mostrado.sg)}%"
+					>
 						<b>{mostrado.sg}</b>
 						{#if sonda}
 							<span class="globo-sub">{mostrado.hora}</span>
@@ -310,14 +386,23 @@
 
 	<!-- ÚLTIMOS 14 DÍAS -------------------------------------------------- -->
 	<section class="tarjeta">
-		<h2>Tabletas por día <small>últimos 14</small></h2>
+		<h2>Carbos de rescate por día <small>gramos · últimos 14</small></h2>
 		<div class="barras">
 			{#each r.serie as d (d.fecha)}
-				<div class="col" title="{etiquetaLarga(d.fecha, r.hoy)}: {decimal(d.tabletas)} tabletas">
+				<div
+					class="col"
+					title="{etiquetaLarga(d.fecha, r.hoy)}: {decimal(d.gramos)} g{d.gramos > d.gramosRescate
+						? ` (${decimal(d.gramos - d.gramosRescate)} g de combustible)`
+						: ''}"
+				>
 					<div class="pista">
-						{#if d.tabletas > 0}
-							<div class="barra" style="height: {(d.tabletas / maxBarra) * 100}%">
-								{#if d.tabletas === maxBarra}<span class="valor">{decimal(d.tabletas)}</span>{/if}
+						{#if d.gramos > 0}
+							<div class="barra" style="height: {(d.gramos / maxBarra) * 100}%">
+								{#if d.gramos > d.gramosRescate}
+									<!-- el combustible va arriba y más tenue: no fue una baja -->
+									<div class="barra-comb" style="height: {((d.gramos - d.gramosRescate) / d.gramos) * 100}%"></div>
+								{/if}
+								{#if d.gramos === maxBarra}<span class="valor">{decimal(d.gramos)}</span>{/if}
 							</div>
 						{/if}
 					</div>
@@ -343,14 +428,22 @@
 		{#each porDia as grupo (grupo.fecha)}
 			<h3 class="dia-titulo">
 				{etiquetaLarga(grupo.fecha, r.hoy)}
-				<small>{decimal(grupo.tomas.reduce((s, t) => s + t.tabletas, 0))} tabletas</small>
+				<small>{decimal(grupo.tomas.reduce((s, t) => s + t.gramos, 0))} g</small>
 			</h3>
 			<ul class="tomas">
 				{#each grupo.tomas as t (t.id)}
 					<li>
 						<span class="hora">{t.hora}</span>
-						<span class="cantidad">{decimal(t.tabletas)} × {r.carbsPorTableta} g</span>
+						<span class="cantidad">
+							{#if t.fuente === TABLETA}
+								{decimal(t.tabletas)} × {r.carbsPorTableta} g
+							{:else}
+								{partirNombre(t.fuente).sabor} · {decimal(t.gramos)} g
+							{/if}
+						</span>
 						<span class="meta">
+							{#if t.proposito === 'combustible'}<b class="tag-comb">combustible</b>{/if}
+							{#if t.cafeina}<b class="cafe">{cafeinaTexto(t.cafeina)}</b>{/if}
 							{#if t.tendencia}<b class="flecha">{t.tendencia}</b>{/if}
 							{#if t.glucosa}<b>{t.glucosa}{#if t.glucosa30}→{t.glucosa30}{/if} mg/dL</b>{/if}
 							{t.contexto || franja(t.hora)}{t.nota ? ` · ${t.nota}` : ''}
@@ -369,12 +462,45 @@
 	<section class="tarjeta">
 		<details>
 			<summary><h2>Compras e inventario</h2></summary>
+
+			<h3 class="subtitulo">Lo que tienes</h3>
+			<ul class="inventario">
+				<li>
+					<span>Tabletas de glucosa</span>
+					<b>{decimal(r.existencias)}</b>
+					<span class="meta">{r.costoPorTableta !== null ? `${pesos(r.costoPorTableta)} c/u` : ''}</span>
+				</li>
+				{#each r.inventario as i (i.fuente)}
+					<li class:agotado={i.quedan <= 0}>
+						<span>{i.fuente}</span>
+						<b>{i.quedan}</b>
+						<span class="meta">
+							de {i.comprado}{i.costoUnidad !== null ? ` · ${pesos(i.costoUnidad)} c/u` : ''}
+						</span>
+					</li>
+				{/each}
+			</ul>
+
+			<h3 class="subtitulo">Registrar una compra</h3>
 			<form method="POST" action="?/comprar" use:enhance class="rejilla">
-				<label>Fecha<input type="date" name="fecha" value={r.hoy} /></label>
-				<label>Frascos<input type="number" name="frascos" min="1" value="1" inputmode="numeric" /></label>
-				<label>Tabletas c/u<input type="number" name="porFrasco" min="1" value={data.tabletasPorFrasco} inputmode="numeric" required /></label>
-				<label>Costo total<input type="number" name="costo" min="0" step="0.01" placeholder="MXN" inputmode="decimal" /></label>
-				<label class="ancho">Marca<input type="text" name="marca" maxlength="60" placeholder="Dex4, Glucoup…" /></label>
+				<label class="ancho">
+					Qué compraste
+					<select id="compra-fuente" name="fuente" bind:value={fuenteCompra}>
+						<option value={TABLETA}>Tabletas de glucosa</option>
+						{#each data.fuentes as f (f.id)}
+							<option value={f.nombre}>{f.nombre}</option>
+						{/each}
+					</select>
+				</label>
+				<label>Fecha<input id="compra-fecha" type="date" name="fecha" value={r.hoy} /></label>
+				{#if fuenteCompra === TABLETA}
+					<label>Frascos<input id="compra-frascos" type="number" name="frascos" min="1" value="1" inputmode="numeric" /></label>
+					<label>Tabletas c/u<input id="compra-porfrasco" type="number" name="porFrasco" min="1" value={data.tabletasPorFrasco} inputmode="numeric" required /></label>
+				{:else}
+					<label>Unidades<input id="compra-unidades" type="number" name="unidades" min="1" value="1" inputmode="numeric" required /></label>
+				{/if}
+				<label>Costo total<input id="compra-costo" type="number" name="costo" min="0" step="0.01" placeholder="MXN" inputmode="decimal" /></label>
+				<label class="ancho">Nota<input id="compra-marca" type="text" name="marca" maxlength="60" placeholder="Dex4, paquete surtido…" /></label>
 				<button class="secundario ancho">Agregar al inventario</button>
 			</form>
 
@@ -383,7 +509,11 @@
 					<li>
 						<span>{etiquetaLarga(c.fecha, r.hoy)}</span>
 						<b>+{c.tabletas}</b>
-						<span class="meta">{c.marca}{c.costo ? ` · ${pesos(c.costo)}` : ''}</span>
+						<span class="meta">
+							{c.fuente === TABLETA ? 'tabletas' : c.fuente}{c.marca ? ` · ${c.marca}` : ''}{c.costo
+								? ` · ${pesos(c.costo)}`
+								: ''}
+						</span>
 						<form method="POST" action="?/borrarCompra" use:enhance>
 							<input type="hidden" name="id" value={c.id} />
 							<button class="borrar" aria-label="Borrar compra">×</button>
@@ -391,11 +521,43 @@
 					</li>
 				{/each}
 			</ul>
-			<p class="pie">Compradas: {r.compradas} · consumidas: {decimal(r.consumidas)}</p>
+			<p class="pie">Tabletas compradas: {r.compradas} · consumidas: {decimal(r.consumidas)}</p>
 
 			<form method="POST" action="?/ajustes" use:enhance class="rejilla">
 				<label>Carbos por tableta<input type="number" name="carbs" min="1" max="50" step="0.5" value={r.carbsPorTableta} inputmode="decimal" /></label>
 				<button class="secundario">Guardar</button>
+			</form>
+		</details>
+	</section>
+
+	<!-- PREAJUSTES ------------------------------------------------------- -->
+	<section class="tarjeta">
+		<details>
+			<summary><h2>Tus preajustes</h2></summary>
+			<p class="pie">
+				Los botones que aparecen junto a las tabletas. Corrige gramos y cafeína con la
+				etiqueta en mano: «cafeína» marcada sin miligramos se registra como
+				<em>con cafeína, sin dato</em>, nunca con un número inventado.
+			</p>
+			{#each data.fuentes as f (f.id)}
+				<form method="POST" action="?/actualizarFuente" use:enhance class="preset-fila">
+					<input type="hidden" name="id" value={f.id} />
+					<span class="preset-nombre">{f.nombre}</span>
+					<label>g<input id="pf-g-{f.id}" type="number" name="gramos" value={f.gramos} min="1" max="200" step="0.5" inputmode="decimal" /></label>
+					<label class="check"><input id="pf-c-{f.id}" type="checkbox" name="traeCafeina" value="1" checked={f.cafeina !== 0} /> cafeína</label>
+					<label>mg<input id="pf-mg-{f.id}" type="number" name="cafeina" value={f.cafeina > 0 ? f.cafeina : ''} placeholder="?" min="0" inputmode="numeric" /></label>
+					<button class="secundario chico">Guardar</button>
+					<button class="borrar" formaction="?/borrarFuente" aria-label="Borrar {f.nombre}">×</button>
+				</form>
+			{/each}
+
+			<h3 class="subtitulo">Agregar uno</h3>
+			<form method="POST" action="?/agregarFuente" use:enhance class="rejilla">
+				<label class="ancho">Nombre<input id="pn-nombre" type="text" name="nombre" maxlength="40" placeholder="Gu Salted Caramel, jugo de manzana…" required /></label>
+				<label>Gramos de carbos<input id="pn-gramos" type="number" name="gramos" min="1" max="200" step="0.5" inputmode="decimal" required /></label>
+				<label class="check"><input id="pn-cafe" type="checkbox" name="traeCafeina" value="1" /> trae cafeína</label>
+				<label>mg, si lo sabes<input id="pn-mg" type="number" name="cafeina" min="0" inputmode="numeric" /></label>
+				<button class="secundario ancho">Agregar preajuste</button>
 			</form>
 		</details>
 	</section>
@@ -420,6 +582,7 @@
 		--acento-ink: #ffffff;
 		--malo: #e34948;
 		--bien: #008300;
+		--ambar: #9a6400;
 		--radio: 14px;
 	}
 	@media (prefers-color-scheme: dark) {
@@ -435,6 +598,7 @@
 			--acento: #3987e5;
 			--malo: #e66767;
 			--bien: #4caf50;
+			--ambar: #d8a029;
 		}
 	}
 	:root[data-theme='dark'] {
@@ -449,6 +613,7 @@
 		--acento: #3987e5;
 		--malo: #e66767;
 		--bien: #4caf50;
+		--ambar: #d8a029;
 	}
 
 	/* Sin esto cada tarjeta mide 30 px más que su columna (padding + borde
@@ -823,6 +988,9 @@
 		align-items: baseline;
 		gap: 5px;
 	}
+	.globo.actual {
+		transform: translate(calc(-100% - 12px), -50%);
+	}
 	.globo b {
 		font-size: 0.95rem;
 	}
@@ -834,6 +1002,16 @@
 	.flecha-sensor.calc {
 		opacity: 0.6;
 		font-style: italic;
+	}
+
+	/* Un Gu o un jugo se distingue de las tabletas; el combustible va tenue. */
+	.pastilla.otra {
+		background: var(--surface);
+		color: var(--acento);
+		border: 1.5px solid var(--acento);
+	}
+	.pastilla.comb {
+		opacity: 0.55;
 	}
 
 	.eje-x {
@@ -865,6 +1043,152 @@
 		color: var(--ink-2);
 	}
 
+	/* --- preajustes en la captura --- */
+	.presets {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+		gap: 6px;
+		margin: 8px 0 4px;
+	}
+	.preset {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 1px;
+		padding: 8px 10px;
+		border: 1px solid var(--line);
+		border-radius: 10px;
+		background: var(--surface-2);
+		color: var(--ink);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		min-width: 0;
+	}
+	.preset:hover {
+		border-color: var(--acento);
+	}
+	.preset:active {
+		transform: scale(0.98);
+	}
+	.preset strong {
+		font-size: 0.85rem;
+		line-height: 1.2;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
+	}
+	.preset small {
+		font-size: 0.7rem;
+		color: var(--ink-3);
+	}
+	.preset .marca {
+		font-size: 0.62rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--acento);
+	}
+	.cafe {
+		color: var(--ambar);
+	}
+	.tag-comb {
+		font-weight: 600;
+		color: var(--ink-3);
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+	.pista-panel {
+		font-size: 0.75rem;
+		color: var(--ink-3);
+		margin: 6px 0 0;
+	}
+
+	/* --- inventario y preajustes --- */
+	.subtitulo {
+		font-size: 0.75rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--ink-3);
+		margin: 16px 0 6px;
+	}
+	.inventario {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.inventario li {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		padding: 7px 0;
+		border-top: 1px solid var(--line);
+		min-width: 0;
+	}
+	.inventario li > span:first-child {
+		flex: 1 1 0;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.inventario b {
+		font-variant-numeric: tabular-nums;
+		font-size: 1.05rem;
+	}
+	.inventario .meta {
+		flex: 0 0 auto;
+	}
+	.inventario .agotado b {
+		color: var(--malo);
+	}
+	select {
+		font: inherit;
+		padding: 9px 10px;
+		border: 1px solid var(--line);
+		border-radius: 10px;
+		background: var(--surface-2);
+		color: var(--ink);
+		min-width: 0;
+	}
+	.preset-fila {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px 10px;
+		padding: 9px 0;
+		border-top: 1px solid var(--line);
+	}
+	.preset-fila .preset-nombre {
+		flex: 1 1 100%;
+		font-weight: 600;
+		font-size: 0.88rem;
+	}
+	.preset-fila label {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.75rem;
+		color: var(--ink-3);
+	}
+	.preset-fila input[type='number'] {
+		width: 62px;
+		padding: 6px 7px;
+	}
+	.check {
+		display: flex;
+		flex-direction: row !important;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.8rem;
+		color: var(--ink-2);
+	}
+	.secundario.chico {
+		padding: 5px 10px;
+		font-size: 0.8rem;
+	}
+
 	/* --- barras --- */
 	.barras {
 		display: flex;
@@ -894,6 +1218,16 @@
 		border-radius: 4px 4px 0 0;
 		min-height: 3px;
 		position: relative;
+	}
+	/* El combustible de una corrida va arriba y tenue: no fue una baja. */
+	.barra-comb {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		background: var(--surface);
+		opacity: 0.55;
+		border-radius: 4px 4px 0 0;
 	}
 	.barra .valor {
 		position: absolute;

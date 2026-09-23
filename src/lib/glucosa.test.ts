@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-	aMinutos, flechaDe, masCercana, nivel, normalizarLecturas, partirTimestamp, subidaPorTableta,
+	aMinutos, flechaDe, masCercana, nivel, normalizarLecturas, partirTimestamp, subidaPorFuente,
 	tendenciaCalculada
 } from './glucosa.ts';
 
@@ -50,24 +50,34 @@ test('los límites parten en bajo, rango y alto', () => {
 	assert.equal(nivel(null), 'sin');
 });
 
-test('la subida por tableta deja el ejercicio aparte y usa la mediana', () => {
-	// Los tres eventos reales del 21/09/2026.
-	const r = subidaPorTableta([
-		{ tabletas: 2, glucosa: 74, glucosa30: 96, contexto: 'antes de comer' }, // +11.0
-		{ tabletas: 4, glucosa: 134, glucosa30: 97, contexto: 'ejercicio' },     // frenó una caída
-		{ tabletas: 4, glucosa: 68, glucosa30: 142, contexto: '' }               // +18.5
+test('la subida se normaliza a 15 g y compara entre fuentes', () => {
+	// Los tres eventos reales del 21/09/2026, más un jugo.
+	const r = subidaPorFuente([
+		{ gramos: 8, fuente: 'tableta', proposito: 'rescate', glucosa: 74, glucosa30: 96, contexto: 'antes de comer' },
+		{ gramos: 16, fuente: 'tableta', proposito: 'rescate', glucosa: 134, glucosa30: 97, contexto: 'ejercicio' },
+		{ gramos: 16, fuente: 'tableta', proposito: 'rescate', glucosa: 68, glucosa30: 142, contexto: '' },
+		{ gramos: 15, fuente: 'Jugo de caja', proposito: 'rescate', glucosa: 62, glucosa30: 140, contexto: '' }
 	]);
-	assert.equal(r?.eventos, 2);
-	assert.equal(r?.enEjercicio, 1);
-	assert.equal(r?.porTableta, 14.75); // mediana de 11.0 y 18.5, sin el ejercicio
+	assert.equal(r?.enEjercicio, 1); // la de ejercicio no entra al cálculo
+	const tab = r?.fuentes.find((f) => f.fuente === 'tableta');
+	assert.equal(tab?.eventos, 2);
+	assert.equal(tab?.por15g, 55.3125); // mediana de 41.25 y 69.375
+	const jugo = r?.fuentes.find((f) => f.fuente === 'Jugo de caja');
+	assert.equal(jugo?.eventos, 1);
+	assert.equal(jugo?.por15g, 78);
 });
 
 test('sin eventos en reposo no se inventa un número', () => {
 	assert.equal(
-		subidaPorTableta([{ tabletas: 4, glucosa: 134, glucosa30: 97, contexto: 'ejercicio' }]),
+		subidaPorFuente([
+			{ gramos: 16, fuente: 'tableta', proposito: 'rescate', glucosa: 134, glucosa30: 97, contexto: 'ejercicio' }
+		]),
 		null
 	);
-	assert.equal(subidaPorTableta([{ tabletas: 2, glucosa: null, glucosa30: null, contexto: '' }]), null);
+	assert.equal(
+		subidaPorFuente([{ gramos: 8, fuente: 'tableta', proposito: 'rescate', glucosa: null, glucosa30: null, contexto: '' }]),
+		null
+	);
 });
 
 test('la tendencia calculada usa la pendiente de los últimos minutos', () => {

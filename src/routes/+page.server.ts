@@ -3,8 +3,9 @@ import type { Actions, PageServerLoad } from './$types';
 import * as db from '$lib/server/db';
 import { resumir } from '$lib/resumen';
 import { ahora, hoy } from '$lib/fechas';
+import { CAFEINA_SIN_DATO, TABLETA } from '$lib/tipos';
 import { leerCarelink } from '$lib/server/carelink';
-import { aMinutos, masCercana, nivel, subidaPorTableta, tendenciaCalculada, type Lectura } from '$lib/glucosa';
+import { aMinutos, masCercana, nivel, subidaPorFuente, tendenciaCalculada, type Lectura } from '$lib/glucosa';
 import type { Toma } from '$lib/tipos';
 
 const num = (v: FormDataEntryValue | null) => {
@@ -14,6 +15,38 @@ const num = (v: FormDataEntryValue | null) => {
 const texto = (v: FormDataEntryValue | null) => String(v ?? '').trim().slice(0, 200);
 const esFecha = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 const esHora = (s: string) => /^\d{2}:\d{2}$/.test(s);
+
+/**
+ * Fecha y hora de un registro.
+ *
+ * Los campos de «Otra hora» viven en el mismo formulario que los botones
+ * rápidos y se envían aunque el panel esté cerrado, con la hora en que se
+ * CARGÓ la página. Un tap a las 17:53 en una página abierta desde las 17:50
+ * quedaba registrado a las 17:50 — y en el iPhone, que congela las páginas en
+ * segundo plano, el desfase puede ser de horas. Por eso solo se respetan
+ * cuando se usó el botón del panel (detallado=1); el tap rápido usa la hora
+ * del servidor, que es cuando de verdad pasó.
+ */
+function momento(f: FormData): { fecha: string; hora: string } | { error: string } {
+	if (texto(f.get('detallado')) !== '1') return { fecha: hoy(), hora: ahora() };
+	const fecha = texto(f.get('fecha')) || hoy();
+	const hora = texto(f.get('hora')) || ahora();
+	if (!esFecha(fecha) || !esHora(hora)) return { error: 'Fecha u hora con formato inválido.' };
+	return { fecha, hora };
+}
+
+/**
+ * Cafeína de un preajuste. Vacío significa «trae, pero no sé cuánta»; un 0
+ * explícito significa «no trae». Son dos cosas distintas y no se confunden.
+ */
+function cafeinaDe(f: FormData): number {
+	if (texto(f.get('traeCafeina')) !== '1') return 0;
+	const mg = num(f.get('cafeina'));
+	return mg !== null && mg > 0 ? mg : CAFEINA_SIN_DATO;
+}
+
+const propositoDe = (f: FormData) =>
+	texto(f.get('proposito')) === 'combustible' ? 'combustible' : 'rescate';
 
 export const load: PageServerLoad = async () => {
 	const carbs = Number(db.ajuste('carbs_por_tableta', '4')) || 4;
@@ -30,6 +63,7 @@ export const load: PageServerLoad = async () => {
 	return {
 		tomas,
 		compras,
+		fuentes: db.fuentes(),
 		resumen: resumir(tomas, compras, carbs),
 		tabletasPorFrasco: Number(db.ajuste('tabletas_por_frasco', '10')) || 10,
 		ahora: ahora(),
@@ -43,7 +77,7 @@ export const load: PageServerLoad = async () => {
 			calculada: estado.flecha ? null : tendenciaCalculada(estado.lecturas)
 		},
 		curva,
-		subida: subidaPorTableta(db.tomas())
+		subida: subidaPorFuente(db.tomas())
 	};
 };
 
@@ -90,7 +124,15 @@ function construirCurva(lecturas: Lectura[], tomas: Toma[]) {
 	const x1 = puntos.at(-1)!.x;
 
 	const marcas = tomas
-		.map((t) => ({ x: x(t.fecha, aMinutos(t.hora)), tabletas: t.tabletas, hora: t.hora, id: t.id }))
+		.map((t) => ({
+			x: x(t.fecha, aMinutos(t.hora)),
+			tabletas: t.tabletas,
+			gramos: t.gramos,
+			fuente: t.fuente,
+			proposito: t.proposito,
+			hora: t.hora,
+			id: t.id
+		}))
 		.filter((m) => m.x >= x0 && m.x <= x1);
 
 	return { puntos, marcas, x0, x1, dia0 };
@@ -103,16 +145,22 @@ export const actions: Actions = {
 		if (tabletas === null || tabletas <= 0 || tabletas > 30) {
 			return fail(400, { error: 'Número de tabletas fuera de rango.' });
 		}
-		const fecha = texto(f.get('fecha')) || hoy();
-		const hora = texto(f.get('hora')) || ahora();
-		if (!esFecha(fecha) || !esHora(hora)) {
-			return fail(400, { error: 'Fecha u hora con formato inválido.' });
-		}
+		const cuando = momento(f);
+		if ('error' in cuando) return fail(400, cuando);
+		const { fecha, hora } = cuando;
 		const glucosa = num(f.get('glucosa'));
+		// El propósito lo decide la pantalla, no la fuente: el mismo Gu puede
+		// ser combustible en una corrida y rescate cuando algo se descontrola.
+		const proposito = propositoDe(f);
+		const carbs = Number(db.ajuste('carbs_por_tableta', '4')) || 4;
 		db.agregarToma({
 			fecha,
 			hora,
 			tabletas,
+			gramos: tabletas * carbs,
+			fuente: 'tableta',
+			proposito,
+			cafeina: 0,
 			contexto: texto(f.get('contexto')),
 			glucosa: glucosa !== null && glucosa >= 20 && glucosa <= 600 ? Math.round(glucosa) : null,
 			tendencia: texto(f.get('tendencia')),
@@ -121,6 +169,60 @@ export const actions: Actions = {
 		// La glucosa se copia sola en el próximo load, desde la curva del
 		// sensor. El tap no espera a la red.
 		return { ok: `${tabletas} tableta${tabletas === 1 ? '' : 's'} a las ${hora}` };
+	},
+
+	/** Un tap en un preajuste: un Gu, una caja de jugo. Una unidad. */
+	registrarFuente: async ({ request }) => {
+		const f = await request.formData();
+		const id = num(f.get('fuenteId'));
+		const fuente = id === null ? undefined : db.fuente(id);
+		if (!fuente) return fail(400, { error: 'Ese preajuste ya no existe.' });
+		const cuando = momento(f);
+		if ('error' in cuando) return fail(400, cuando);
+		const glucosa = num(f.get('glucosa'));
+		db.agregarToma({
+			...cuando,
+			tabletas: 0,
+			gramos: fuente.gramos,
+			fuente: fuente.nombre,
+			proposito: propositoDe(f),
+			cafeina: fuente.cafeina,
+			contexto: texto(f.get('contexto')),
+			glucosa: glucosa !== null && glucosa >= 20 && glucosa <= 600 ? Math.round(glucosa) : null,
+			tendencia: texto(f.get('tendencia')),
+			nota: texto(f.get('nota'))
+		});
+		return { ok: `${fuente.nombre} · ${fuente.gramos} g a las ${cuando.hora}` };
+	},
+
+	agregarFuente: async ({ request }) => {
+		const f = await request.formData();
+		const nombre = texto(f.get('nombre')).slice(0, 40);
+		const gramos = num(f.get('gramos'));
+		if (!nombre) return fail(400, { error: 'Ponle nombre.' });
+		if (gramos === null || gramos <= 0 || gramos > 200) {
+			return fail(400, { error: 'Gramos de carbohidrato fuera de rango.' });
+		}
+		db.agregarFuente(nombre, gramos, cafeinaDe(f), 'rescate');
+		return { ok: `${nombre} agregado` };
+	},
+
+	actualizarFuente: async ({ request }) => {
+		const f = await request.formData();
+		const id = num(f.get('id'));
+		const gramos = num(f.get('gramos'));
+		if (id === null || gramos === null || gramos <= 0 || gramos > 200) {
+			return fail(400, { error: 'Gramos de carbohidrato fuera de rango.' });
+		}
+		db.actualizarFuente(id, gramos, cafeinaDe(f));
+		return { ok: 'Preajuste actualizado' };
+	},
+
+	borrarFuente: async ({ request }) => {
+		const id = num((await request.formData()).get('id'));
+		if (id === null) return fail(400, { error: 'Falta el id.' });
+		db.borrarFuente(id);
+		return { ok: 'Preajuste borrado' };
 	},
 
 	borrar: async ({ request }) => {
@@ -132,23 +234,32 @@ export const actions: Actions = {
 
 	comprar: async ({ request }) => {
 		const f = await request.formData();
-		const frascos = num(f.get('frascos')) ?? 1;
-		const porFrasco = num(f.get('porFrasco'));
-		if (porFrasco === null || porFrasco <= 0 || frascos <= 0) {
-			return fail(400, { error: '¿Cuántos frascos y de cuántas tabletas?' });
+		const fuente = texto(f.get('fuente')) || TABLETA;
+		let tabletas: number;
+		if (fuente === TABLETA) {
+			const frascos = num(f.get('frascos')) ?? 1;
+			const porFrasco = num(f.get('porFrasco'));
+			if (porFrasco === null || porFrasco <= 0 || frascos <= 0) {
+				return fail(400, { error: '¿Cuántos frascos y de cuántas tabletas?' });
+			}
+			tabletas = Math.round(frascos * porFrasco);
+			// El tamaño del frasco se recuerda para la próxima compra.
+			db.guardarAjuste('tabletas_por_frasco', String(Math.round(porFrasco)));
+		} else {
+			const unidades = num(f.get('unidades'));
+			if (unidades === null || unidades <= 0) return fail(400, { error: '¿Cuántas unidades?' });
+			tabletas = Math.round(unidades);
 		}
-		const tabletas = Math.round(frascos * porFrasco);
 		const fecha = texto(f.get('fecha')) || hoy();
 		if (!esFecha(fecha)) return fail(400, { error: 'Fecha inválida.' });
 		db.agregarCompra({
 			fecha,
 			tabletas,
+			fuente,
 			costo: Math.max(0, num(f.get('costo')) ?? 0),
 			marca: texto(f.get('marca'))
 		});
-		// El tamaño del frasco se recuerda para la próxima compra.
-		db.guardarAjuste('tabletas_por_frasco', String(Math.round(porFrasco)));
-		return { ok: `+${tabletas} tabletas al inventario` };
+		return { ok: `+${tabletas} ${fuente === TABLETA ? 'tabletas' : fuente} al inventario` };
 	},
 
 	borrarCompra: async ({ request }) => {
