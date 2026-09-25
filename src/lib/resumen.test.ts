@@ -155,6 +155,17 @@ test('la cafeína sin dato se reporta aparte, no se suma', () => {
 	assert.deepEqual(r.hoyCafeina, { mg: 80, sinDato: 1 }); // nunca 79
 });
 
+test('las bajas del día y su patrón se cuentan por episodio, no por tap', () => {
+	const r = resumir(
+		[toma('2026-09-25', '03:21', 2, 'nocturna'), toma('2026-09-25', '03:21', 1, 'nocturna')],
+		[compra('2026-09-01', 50)], 4, '2026-09-25'
+	);
+	assert.equal(r.hoyRescates, 1); // una baja, aunque fueron dos taps
+	assert.equal(r.hoyEventos, 2); // los dos taps siguen existiendo
+	assert.deepEqual(r.porFranja.map((f) => [f.llave, f.eventos]), [['madrugada', 1]]);
+	assert.equal(r.existencias, 47); // el inventario sí cuenta las 3 tabletas
+});
+
 test('la serie trae 14 días, con ceros y el de hoy al final', () => {
 	const r = resumir([toma('2026-09-21', '15:30', 2)], [], 4, '2026-09-21');
 	assert.equal(r.serie.length, 14);

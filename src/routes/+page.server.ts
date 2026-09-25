@@ -3,7 +3,8 @@ import type { Actions, PageServerLoad } from './$types';
 import * as db from '$lib/server/db';
 import { resumir } from '$lib/resumen';
 import { ahora, hoy } from '$lib/fechas';
-import { CAFEINA_SIN_DATO, TABLETA } from '$lib/tipos';
+import { CAFEINA_SIN_DATO, RESCATE, TABLETA } from '$lib/tipos';
+import { episodios } from '$lib/episodios';
 import { leerCarelink } from '$lib/server/carelink';
 import { aMinutos, masCercana, nivel, subidaPorFuente, tendenciaCalculada, type Lectura } from '$lib/glucosa';
 import type { Toma } from '$lib/tipos';
@@ -82,7 +83,7 @@ export const load: PageServerLoad = async () => {
 			calculada: estado.flecha ? null : tendenciaCalculada(estado.lecturas)
 		},
 		curva,
-		subida: subidaPorFuente(db.tomas())
+		subida: subidaPorFuente(episodios(db.tomas().filter((t) => t.proposito === RESCATE)))
 	};
 };
 

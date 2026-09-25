@@ -168,7 +168,7 @@
 		<p class="sub">
 			{#if r.hoyEventos}
 				Hoy: {decimal(r.hoyGramos)} g de carbos
-				{#if r.hoyRescates}· {r.hoyRescates} {r.hoyRescates === 1 ? 'rescate' : 'rescates'}{/if}
+				{#if r.hoyRescates}· {r.hoyRescates} {r.hoyRescates === 1 ? 'baja' : 'bajas'}{/if}
 				{#if r.hoyCombustible}· {r.hoyCombustible} de combustible{/if}
 				{#if r.hoyCafeina.mg || r.hoyCafeina.sinDato}
 					· cafeína {r.hoyCafeina.mg ? `${r.hoyCafeina.mg} mg` : ''}{r.hoyCafeina.sinDato
@@ -302,7 +302,7 @@
 				<strong>+{Math.round(subidaTableta?.por15g ?? 0)}</strong>
 				<span class="pie">
 					mg/dL a los 30 min, en reposo · {subidaTableta?.eventos ?? 0}
-					{subidaTableta?.eventos === 1 ? 'rescate' : 'rescates'}{#if data.subida.enEjercicio}{' '}·
+					{subidaTableta?.eventos === 1 ? 'baja medida' : 'bajas medidas'}{#if data.subida.enEjercicio}{' '}·
 						{data.subida.enEjercicio} en ejercicio aparte{/if}
 				</span>
 			</div>

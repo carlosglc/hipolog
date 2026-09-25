@@ -4,6 +4,8 @@ import {
 	aMinutos, flechaDe, masCercana, nivel, normalizarLecturas, partirTimestamp, subidaPorFuente,
 	tendenciaCalculada
 } from './glucosa.ts';
+import { episodios } from './episodios.ts';
+import type { Toma } from './tipos.ts';
 
 test('sg = 0 es un hueco, no un cero', () => {
 	// Tal cual viene en los volcados de CareLink cuando no hay lectura aún.
@@ -50,34 +52,52 @@ test('los límites parten en bajo, rango y alto', () => {
 	assert.equal(nivel(null), 'sin');
 });
 
+/** Una toma de rescate con la glucosa ya rellenada por el sensor. */
+const rescate = (
+	hora: string, gramos: number, fuente: string, glucosa: number | null, glucosa30: number | null,
+	contexto = '', fecha = '2026-09-21'
+): Toma => ({
+	id: 0, fecha, hora, tabletas: fuente === 'tableta' ? gramos / 4 : 0, gramos, fuente,
+	proposito: 'rescate', cafeina: 0, contexto, glucosa, glucosa30, tendencia: '', nota: ''
+});
+
 test('la subida se normaliza a 15 g y compara entre fuentes', () => {
-	// Los tres eventos reales del 21/09/2026, más un jugo.
-	const r = subidaPorFuente([
-		{ gramos: 8, fuente: 'tableta', proposito: 'rescate', glucosa: 74, glucosa30: 96, contexto: 'antes de comer' },
-		{ gramos: 16, fuente: 'tableta', proposito: 'rescate', glucosa: 134, glucosa30: 97, contexto: 'ejercicio' },
-		{ gramos: 16, fuente: 'tableta', proposito: 'rescate', glucosa: 68, glucosa30: 142, contexto: '' },
-		{ gramos: 15, fuente: 'Jugo de caja', proposito: 'rescate', glucosa: 62, glucosa30: 140, contexto: '' }
-	]);
+	// Los tres rescates reales del 21/09/2026, más un jugo.
+	const r = subidaPorFuente(episodios([
+		rescate('15:30', 8, 'tableta', 74, 96, 'antes de comer'),
+		rescate('19:30', 16, 'tableta', 134, 97, 'ejercicio'),
+		rescate('21:49', 16, 'tableta', 68, 142),
+		rescate('22:40', 15, 'Jugo de caja', 62, 140)
+	]));
 	assert.equal(r?.enEjercicio, 1); // la de ejercicio no entra al cálculo
 	const tab = r?.fuentes.find((f) => f.fuente === 'tableta');
 	assert.equal(tab?.eventos, 2);
 	assert.equal(tab?.por15g, 55.3125); // mediana de 41.25 y 69.375
-	const jugo = r?.fuentes.find((f) => f.fuente === 'Jugo de caja');
-	assert.equal(jugo?.eventos, 1);
-	assert.equal(jugo?.por15g, 78);
+	assert.equal(r?.fuentes.find((f) => f.fuente === 'Jugo de caja')?.por15g, 78);
 });
 
-test('sin eventos en reposo no se inventa un número', () => {
-	assert.equal(
-		subidaPorFuente([
-			{ gramos: 16, fuente: 'tableta', proposito: 'rescate', glucosa: 134, glucosa30: 97, contexto: 'ejercicio' }
-		]),
-		null
-	);
-	assert.equal(
-		subidaPorFuente([{ gramos: 8, fuente: 'tableta', proposito: 'rescate', glucosa: null, glucosa30: null, contexto: '' }]),
-		null
-	);
+test('+2 y +1 en la misma baja cuentan como UNA, con los 12 g juntos', () => {
+	// El caso real del 25/09/2026, 03:21: sin botón +3, dos taps en el mismo minuto.
+	const r = subidaPorFuente(episodios([
+		rescate('03:21', 8, 'tableta', 55, 62, '', '2026-09-25'),
+		rescate('03:21', 4, 'tableta', 55, 62, '', '2026-09-25')
+	]));
+	const tab = r?.fuentes.find((f) => f.fuente === 'tableta');
+	assert.equal(tab?.eventos, 1); // una baja, no dos
+	assert.equal(tab?.por15g, 8.75); // (62 − 55) ÷ 12 g × 15, no +26 ni +13
+});
+
+test('una baja que mezcla fuentes no se le atribuye a ninguna', () => {
+	const r = subidaPorFuente(episodios([
+		rescate('10:00', 8, 'tableta', 60, 90),
+		rescate('10:05', 23, 'Gu Strawberry Banana', 60, 110)
+	]));
+	assert.equal(r, null);
+});
+
+test('sin bajas en reposo no se inventa un número', () => {
+	assert.equal(subidaPorFuente(episodios([rescate('19:30', 16, 'tableta', 134, 97, 'ejercicio')])), null);
+	assert.equal(subidaPorFuente(episodios([rescate('15:30', 8, 'tableta', null, null)])), null);
 });
 
 test('la tendencia calculada usa la pendiente de los últimos minutos', () => {

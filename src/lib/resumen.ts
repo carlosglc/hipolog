@@ -1,5 +1,6 @@
 import { CAFEINA_SIN_DATO, RESCATE, TABLETA, type Compra, type Toma } from './tipos.ts';
 import { diasEntre, etiquetaDia, franja, hoy as hoyLocal, sumarDias } from './fechas.ts';
+import { episodios, type Episodio } from './episodios.ts';
 
 export type Resumen = ReturnType<typeof resumir>;
 
@@ -78,6 +79,8 @@ export function resumir(
 	// Solo los rescates son hipoglucemias. El combustible de una corrida se
 	// cuenta aparte o inflaría el conteo de bajas del día.
 	const rescates = tomas.filter((t) => t.proposito === RESCATE);
+	// Una baja registrada en varios taps (+2 y luego +1) sigue siendo UNA baja.
+	const bajas = episodios(rescates);
 
 	const deHoy = tomas.filter((t) => t.fecha === hoy);
 	const desdeSemana = sumarDias(hoy, -6);
@@ -100,6 +103,20 @@ export function resumir(
 			eventos: dia.length
 		};
 	});
+
+	// El patrón de las bajas (a qué hora, en qué contexto) se cuenta por
+	// episodio: dos taps de la misma baja no son dos bajas a las 3 de la mañana.
+	const agruparBajas = (clave: (e: Episodio) => string) => {
+		const mapa = new Map<string, { llave: string; eventos: number; gramos: number }>();
+		for (const e of bajas) {
+			const llave = clave(e) || '—';
+			const fila = mapa.get(llave) ?? { llave, eventos: 0, gramos: 0 };
+			fila.eventos += 1;
+			fila.gramos += e.gramos;
+			mapa.set(llave, fila);
+		}
+		return [...mapa.values()].sort((a, b) => b.eventos - a.eventos);
+	};
 
 	const agrupar = (clave: (t: Toma) => string, filas: Toma[] = tomas) => {
 		const mapa = new Map<string, { llave: string; eventos: number; gramos: number }>();
@@ -129,7 +146,7 @@ export function resumir(
 		hoyTabletas: deHoy.filter((t) => t.fuente === TABLETA).reduce((s, t) => s + t.tabletas, 0),
 		hoyGramos: deHoy.reduce((s, t) => s + t.gramos, 0),
 		hoyEventos: deHoy.length,
-		hoyRescates: deHoy.filter((t) => t.proposito === RESCATE).length,
+		hoyRescates: bajas.filter((e) => e.fecha === hoy).length,
 		hoyCombustible: deHoy.filter((t) => t.proposito !== RESCATE).length,
 		hoyCafeina: cafeinaDe(deHoy),
 		semanaCafeina: cafeinaDe(deSemana),
@@ -139,8 +156,8 @@ export function resumir(
 		serie,
 		// El patrón de las bajas: solo rescates. Un gel de media corrida no
 		// dice nada sobre a qué horas te pega una hipoglucemia.
-		porContexto: agrupar((t) => t.contexto, rescates),
-		porFranja: agrupar((t) => franja(t.hora), rescates),
+		porContexto: agruparBajas((e) => e.contexto),
+		porFranja: agruparBajas((e) => franja(e.hora)),
 		porFuente: agrupar((t) => t.fuente)
 	};
 }

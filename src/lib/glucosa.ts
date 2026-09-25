@@ -1,3 +1,5 @@
+import type { Episodio } from './episodios.ts';
+
 // Lógica pura sobre el payload de CareLink. Sin red, sin base: probable.
 //
 // El shape sale de los volcados reales en ~/Projects/carelink-python-client
@@ -141,31 +143,21 @@ export function masCercana(
  *    el promedio entero.
  */
 export function subidaPorFuente(
-	eventos: {
-		gramos: number;
-		fuente: string;
-		proposito: string;
-		glucosa: number | null;
-		glucosa30: number | null;
-		contexto: string;
-	}[]
+	eps: Episodio[]
 ): { fuentes: { fuente: string; por15g: number; eventos: number }[]; enEjercicio: number } | null {
-	// Solo rescates: "cuánto me sube" solo tiene sentido partiendo de una baja.
-	// Un gel tomado en 160 mg/dL para no bajar mide otra cosa por completo.
-	const utiles = eventos.filter(
-		(e) =>
-			e.glucosa !== null &&
-			e.glucosa30 !== null &&
-			e.gramos > 0 &&
-			e.proposito === 'rescate'
-	);
-	const reposo = utiles.filter((e) => e.contexto !== 'ejercicio');
-	if (!reposo.length) return null;
+	// Recibe episodios de RESCATE: "cuánto me sube" solo tiene sentido partiendo
+	// de una baja. Un gel tomado en 160 mg/dL para no bajar mide otra cosa.
+	const utiles = eps.filter((e) => e.glucosa !== null && e.glucosa30 !== null && e.gramos > 0);
+	const reposo = utiles.filter((e) => !e.ejercicio);
+	// Un episodio que mezcla fuentes (un Gu y dos tabletas) no le puede atribuir
+	// la subida a ninguna de las dos: queda fuera de la comparación.
+	const puros = reposo.filter((e) => e.fuentes.length === 1);
+	if (!puros.length) return null;
 
 	const porFuente = new Map<string, number[]>();
-	for (const e of reposo) {
+	for (const e of puros) {
 		const subida = ((e.glucosa30! - e.glucosa!) / e.gramos) * 15;
-		porFuente.set(e.fuente, [...(porFuente.get(e.fuente) ?? []), subida]);
+		porFuente.set(e.fuentes[0], [...(porFuente.get(e.fuentes[0]) ?? []), subida]);
 	}
 
 	const fuentes = [...porFuente.entries()]
