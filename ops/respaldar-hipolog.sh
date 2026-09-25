@@ -1,5 +1,14 @@
 #!/bin/sh
-# Respaldo diario de hipolog. Lo corre cron en el homelab (ver `crontab -l`).
+# Respaldo de hipolog.
+#
+#   respaldar-hipolog.sh              el diario, hipolog-AAAA-MM-DD.db
+#                                     (lo corre cron; se guarda 30 días)
+#   respaldar-hipolog.sh <etiqueta>   una copia a mano, <etiqueta>-AAAAMMDD-HHMM.db
+#                                     (nunca pisa al diario, nunca se borra sola)
+#
+# La etiqueta existe por la restauración: antes de restaurar se guarda el estado
+# actual, por si se eligió mal la fecha. Con el nombre diario, ese paso
+# sobrescribiría justo el respaldo de hoy que quizá se quería restaurar.
 #
 #   copia consistente y verificada → fuera del volumen → 30 días aquí
 #
@@ -11,8 +20,12 @@ set -eu
 DIR="$HOME/respaldos"
 LOG="$DIR/respaldos.log"
 APP="$HOME/docker/hipolog"
-# 09:00 UTC en cron = 03:00 en México, así que la fecha UTC es la del día.
-F="hipolog-$(date -u +%F).db"
+if [ $# -gt 0 ]; then
+	F="$1-$(date -u +%Y%m%d-%H%M).db"
+else
+	# 09:00 UTC en cron = 03:00 en México, así que la fecha UTC es la del día.
+	F="hipolog-$(date -u +%F).db"
+fi
 
 mkdir -p "$DIR"
 log() { echo "[$(date -u '+%F %T')] $*" >> "$LOG"; }

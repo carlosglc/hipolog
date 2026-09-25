@@ -1,7 +1,7 @@
 // Respaldo de la base de hipolog. Corre DENTRO del contenedor; lo invoca
 // ops/respaldar-hipolog.sh desde el homelab. Dos modos:
 //
-//   node scripts/respaldar.mjs <archivo.db>            → copia verificada en /datos
+//   node scripts/respaldar.mjs <archivo.db>            → copia verificada junto a la base
 //   node scripts/respaldar.mjs --registrar [<iso-pc>]  → anota el éxito en la app
 //
 // Son dos pasos porque el respaldo solo cuenta como hecho cuando la copia ya
@@ -31,8 +31,10 @@ if (modo === '--registrar') {
 	process.exit(0);
 }
 
-if (!/^hipolog-\d{4}-\d{2}-\d{2}\.db$/.test(modo ?? '')) {
-	console.error('uso: respaldar.mjs hipolog-AAAA-MM-DD.db | --registrar [iso]');
+// Solo letras minúsculas, dígitos y guiones: ni diagonales ni puntos extra, así
+// que ningún nombre puede salirse de la carpeta de la base.
+if (!/^[a-z0-9][a-z0-9-]*\.db$/.test(modo ?? '')) {
+	console.error('uso: respaldar.mjs <nombre>.db | --registrar [iso]');
 	process.exit(2);
 }
 

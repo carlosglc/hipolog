@@ -12,7 +12,7 @@ LOG="$DEST/copia.log"
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=15"
 mkdir -p "$DEST"
 
-if rsync -a -e "$SSH" --include='hipolog-*.db' --include='respaldo-*.db' --exclude='*' \
+if rsync -a -e "$SSH" --include='*.db' --exclude='*' \
 	jerry@homie-lab.local:respaldos/ "$DEST/" 2>>"$LOG"; then
 	# Le avisa al homelab que la copia llegó. El respaldo diario lo anota en la
 	# app, así que si esta PC deja de copiar, se ve en la pantalla.
