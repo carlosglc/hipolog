@@ -66,6 +66,11 @@ export const load: PageServerLoad = async () => {
 		fuentes: db.fuentes(),
 		resumen: resumir(tomas, compras, carbs),
 		tabletasPorFrasco: Number(db.ajuste('tabletas_por_frasco', '10')) || 10,
+		// Los anota ops/respaldar-hipolog.sh. Vacíos = todavía no corre ninguno.
+		respaldo: {
+			ultimo: db.ajuste('ultimo_respaldo', ''),
+			copiaPc: db.ajuste('ultima_copia_pc', '')
+		},
 		ahora: ahora(),
 		sensor: estado && {
 			sg: estado.sg,

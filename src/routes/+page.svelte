@@ -146,6 +146,15 @@
 	const cafeinaTexto = (mg: number) =>
 		mg === CAFEINA_SIN_DATO ? 'con cafeína' : mg > 0 ? `${mg} mg cafeína` : '';
 
+	// Un respaldo que dejó de correr tiene que VERSE, no descubrirse el día que
+	// hace falta restaurar. El diario corre a las 03:00; la PC copia cada hora.
+	const HORA = 3_600_000;
+	const antiguedad = (iso: string) => (iso ? (Date.now() - Date.parse(iso)) / HORA : null);
+	const haceCuanto = (h: number | null) =>
+		h === null ? 'nunca' : h < 1 ? 'hace menos de 1 h' : h < 48 ? `hace ${Math.round(h)} h` : `hace ${Math.round(h / 24)} días`;
+	const horasRespaldo = $derived(antiguedad(data.respaldo.ultimo));
+	const horasCopiaPc = $derived(antiguedad(data.respaldo.copiaPc));
+
 	const pesos = (n: number) =>
 		n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
 	const decimal = (n: number) => n.toFixed(1).replace(/\.0$/, '');
@@ -565,7 +574,18 @@
 	</div>
 	</div>
 
-	<footer>Registro personal, no es un dispositivo médico. Los datos viven en tu SQLite.</footer>
+	<footer>
+		<p class="respaldos">
+			<span class:atrasado={horasRespaldo === null || horasRespaldo > 36}>
+				Último respaldo: {haceCuanto(horasRespaldo)}
+			</span>
+			·
+			<span class:atrasado={horasCopiaPc === null || horasCopiaPc > 72}>
+				copia en tu PC: {haceCuanto(horasCopiaPc)}
+			</span>
+		</p>
+		Registro personal, no es un dispositivo médico.
+	</footer>
 </main>
 
 <style>
@@ -1332,6 +1352,13 @@
 		margin: 6px 0 0;
 	}
 
+	.respaldos {
+		margin: 0 0 4px;
+	}
+	.respaldos .atrasado {
+		color: var(--malo);
+		font-weight: 600;
+	}
 	footer {
 		text-align: center;
 		font-size: 0.72rem;
