@@ -46,6 +46,12 @@ function cafeinaDe(f: FormData): number {
 	return mg !== null && mg > 0 ? mg : CAFEINA_SIN_DATO;
 }
 
+/** El identificador que genera la bandeja del teléfono para cada tap. */
+function clienteIdDe(f: FormData): string | null {
+	const id = texto(f.get('cliente_id'));
+	return /^[a-z0-9-]{8,64}$/.test(id) ? id : null;
+}
+
 const propositoDe = (f: FormData) =>
 	texto(f.get('proposito')) === 'combustible' ? 'combustible' : 'rescate';
 
@@ -73,6 +79,7 @@ export const load: PageServerLoad = async () => {
 			copiaPc: db.ajuste('ultima_copia_pc', '')
 		},
 		ahora: ahora(),
+		generado: new Date().toISOString(),
 		sensor: estado && {
 			sg: estado.sg,
 			flecha: estado.flecha,
@@ -159,7 +166,7 @@ export const actions: Actions = {
 		// ser combustible en una corrida y rescate cuando algo se descontrola.
 		const proposito = propositoDe(f);
 		const carbs = Number(db.ajuste('carbs_por_tableta', '4')) || 4;
-		db.agregarToma({
+		const nueva = db.agregarToma({
 			fecha,
 			hora,
 			tabletas,
@@ -171,10 +178,13 @@ export const actions: Actions = {
 			glucosa: glucosa !== null && glucosa >= 20 && glucosa <= 600 ? Math.round(glucosa) : null,
 			tendencia: texto(f.get('tendencia')),
 			nota: texto(f.get('nota'))
-		});
+		}, clienteIdDe(f));
 		// La glucosa se copia sola en el próximo load, desde la curva del
 		// sensor. El tap no espera a la red.
-		return { ok: `${tabletas} tableta${tabletas === 1 ? '' : 's'} a las ${hora}` };
+		return {
+			ok: `${tabletas} tableta${tabletas === 1 ? '' : 's'} a las ${hora}`,
+			repetida: !nueva
+		};
 	},
 
 	/** Un tap en un preajuste: un Gu, una caja de jugo. Una unidad. */
@@ -186,7 +196,7 @@ export const actions: Actions = {
 		const cuando = momento(f);
 		if ('error' in cuando) return fail(400, cuando);
 		const glucosa = num(f.get('glucosa'));
-		db.agregarToma({
+		const nueva = db.agregarToma({
 			...cuando,
 			tabletas: 0,
 			gramos: fuente.gramos,
@@ -197,8 +207,8 @@ export const actions: Actions = {
 			glucosa: glucosa !== null && glucosa >= 20 && glucosa <= 600 ? Math.round(glucosa) : null,
 			tendencia: texto(f.get('tendencia')),
 			nota: texto(f.get('nota'))
-		});
-		return { ok: `${fuente.nombre} · ${fuente.gramos} g a las ${cuando.hora}` };
+		}, clienteIdDe(f));
+		return { ok: `${fuente.nombre} · ${fuente.gramos} g a las ${cuando.hora}`, repetida: !nueva };
 	},
 
 	agregarFuente: async ({ request }) => {

@@ -24,6 +24,7 @@ export default defineConfig({
 					'http://homie-lab.local:8477', // tu wifi, por nombre
 					'http://192.168.1.87:8477', // tu wifi, por IP
 					'http://homie-lab.tail48b215.ts.net', // Tailscale vía `tailscale serve`
+					'https://homie-lab.tail48b215.ts.net', // la misma, con certificado: la que funciona sin señal
 					'http://homie-lab', // Tailscale, nombre corto de MagicDNS
 					'http://100.90.40.124:8477' // Tailscale directo (sin serve)
 				]

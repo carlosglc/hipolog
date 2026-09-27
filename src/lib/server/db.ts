@@ -98,6 +98,16 @@ if (!colCompras.some((c) => c.name === 'fuente')) {
 	db.exec("ALTER TABLE compras ADD COLUMN fuente TEXT NOT NULL DEFAULT 'tableta'");
 }
 
+// Cada tap que llega desde la bandeja del teléfono trae un identificador que
+// genera el teléfono. Si la red reenvía la misma petición —pasó el 26/09 a las
+// 17:28: dos filas con 105 ms de diferencia—, la segunda choca contra este
+// índice y no se inserta. Los formularios sin JavaScript no lo mandan: su
+// NULL no choca con nada, porque SQLite permite muchos NULL en un UNIQUE.
+if (!tiene('cliente_id')) {
+	db.exec('ALTER TABLE tomas ADD COLUMN cliente_id TEXT');
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS tomas_cliente_id ON tomas (cliente_id)');
+
 // Migración de la tabla de preajustes, que nació sin estas dos columnas.
 const colFuentes = db.prepare('PRAGMA table_info(fuentes)').all() as unknown as { name: string }[];
 if (!colFuentes.some((c) => c.name === 'cafeina')) {
@@ -176,11 +186,15 @@ export function tomas(): Toma[] {
 		.all() as unknown as Toma[];
 }
 
-/** Devuelve el id insertado, para poder completarlo después con la glucosa. */
-export function agregarToma(t: Omit<Toma, 'id' | 'glucosa30'>): number {
+/**
+ * Inserta una toma. Si trae `clienteId` y ya existe una con ese id, no inserta
+ * nada y devuelve `false`: un reenvío de la red no es una toma nueva.
+ */
+export function agregarToma(t: Omit<Toma, 'id' | 'glucosa30'>, clienteId: string | null = null): boolean {
 	const res = db.prepare(
-		`INSERT INTO tomas (fecha, hora, tabletas, gramos, fuente, proposito, cafeina, contexto, glucosa, tendencia, nota, creado)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO tomas (fecha, hora, tabletas, gramos, fuente, proposito, cafeina, contexto, glucosa, tendencia, nota, creado, cliente_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (cliente_id) DO NOTHING`
 	).run(
 		t.fecha,
 		t.hora,
@@ -193,9 +207,10 @@ export function agregarToma(t: Omit<Toma, 'id' | 'glucosa30'>): number {
 		t.glucosa,
 		t.tendencia,
 		t.nota,
-		new Date().toISOString()
+		new Date().toISOString(),
+		clienteId
 	);
-	return Number(res.lastInsertRowid);
+	return res.changes > 0;
 }
 
 /** Completa una toma con lo que dijo el sensor. Solo rellena lo que falta. */

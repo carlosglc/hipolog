@@ -1,5 +1,16 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import {
+		enviarPendiente,
+		guardarBandeja,
+		leerBandeja,
+		momentoLocal,
+		nuevoId,
+		type Pendiente
+	} from '$lib/bandeja';
 	import { etiquetaLarga, franja } from '$lib/fechas';
 	import { CAFEINA_SIN_DATO, CONTEXTOS, TABLETA, TENDENCIAS } from '$lib/tipos';
 	import { aMinutos, LIMITE_ALTO, LIMITE_BAJO } from '$lib/glucosa';
@@ -158,6 +169,133 @@
 	const pesos = (n: number) =>
 		n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 });
 	const decimal = (n: number) => n.toFixed(1).replace(/\.0$/, '');
+
+	// ---------- bandeja de salida: cada tap se guarda primero en el teléfono ----------
+	let bandeja = $state<Pendiente[]>([]);
+	let mensaje = $state<{ texto: string; malo?: boolean } | null>(null);
+	let vaciando = false;
+
+	async function vaciarBandeja() {
+		if (vaciando || !bandeja.length) return;
+		vaciando = true;
+		let alguno = false;
+		try {
+			// En orden y de uno en uno: si el primero no sale, los demás tampoco.
+			while (bandeja.length) {
+				const p = bandeja[0];
+				const res = await enviarPendiente(p);
+				if (res.estado === 'sin-red') {
+					mensaje = res.detalle
+						? { texto: `No se pudo enviar (${res.detalle}). Sigue guardada y se reintenta sola.`, malo: true }
+						: { texto: `Sin señal: ${p.etiqueta} a las ${p.hora} quedó guardada en el teléfono. Se manda sola cuando vuelva la red.` };
+					break;
+				}
+				bandeja = bandeja.slice(1);
+				guardarBandeja(bandeja);
+				if (res.estado === 'rechazado') {
+					mensaje = { texto: `La toma de las ${p.hora} no se registró: ${res.detalle}. Captúrala de nuevo.`, malo: true };
+				} else {
+					alguno = true;
+					mensaje = { texto: `${p.etiqueta} a las ${p.hora} · registrada` };
+				}
+			}
+		} finally {
+			vaciando = false;
+		}
+		if (alguno) await refrescar();
+	}
+
+	/**
+	 * El tap no va directo al servidor: se guarda en el teléfono con su hora y
+	 * un identificador, y después se manda. Sin señal, espera; con señal, sale
+	 * en el acto. Así funciona igual en el wifi de tu casa que junto al Reclusorio.
+	 */
+	const capturar: SubmitFunction = ({ formData, action, formElement, cancel }) => {
+		cancel();
+		const accion = action.search.includes('registrarFuente') ? 'registrarFuente' : 'registrar';
+		// Con el panel «Otra hora» abierto manda su hora; si no, la de este instante.
+		const cuando =
+			formData.get('detallado') === '1'
+				? { fecha: String(formData.get('fecha') ?? ''), hora: String(formData.get('hora') ?? '') }
+				: momentoLocal(new Date());
+		const campos: Record<string, string> = {};
+		for (const k of ['contexto', 'tendencia', 'proposito', 'glucosa', 'nota', 'fuenteId']) {
+			const v = formData.get(k);
+			if (typeof v === 'string' && v !== '') campos[k] = v;
+		}
+		let etiqueta: string;
+		if (accion === 'registrar') {
+			// El botón y el campo del panel se llaman igual: vale el primero con valor.
+			const tabletas = formData.getAll('tabletas').map(String).find((v) => v.trim() !== '');
+			if (!tabletas) {
+				mensaje = { texto: '¿Cuántas tabletas?', malo: true };
+				return;
+			}
+			campos.tabletas = tabletas;
+			etiqueta = `+${tabletas} tableta${tabletas === '1' ? '' : 's'}`;
+		} else {
+			etiqueta = data.fuentes.find((f) => String(f.id) === campos.fuenteId)?.nombre ?? 'Preajuste';
+		}
+
+		const p: Pendiente = { id: nuevoId(), accion, campos, ...cuando, etiqueta, creado: new Date().toISOString() };
+		bandeja = [...bandeja, p];
+		mensaje = guardarBandeja(bandeja)
+			? { texto: `${etiqueta} a las ${cuando.hora} · enviando…` }
+			: { texto: `${etiqueta} a las ${cuando.hora}: este navegador no deja guardar en el teléfono; si no hay señal, se pierde al cerrar.`, malo: true };
+		formElement.reset();
+		void vaciarBandeja();
+	};
+
+	// ---------- que la pantalla no se quede vieja ----------
+	// Desde el ícono de inicio no hay «jalar para actualizar», así que la app se
+	// actualiza sola al volver a primer plano y cada minuto, y trae su botón.
+	let ahoraMs = $state(Date.now());
+	let actualizando = $state(false);
+	const edadMin = $derived(Math.max(0, Math.floor((ahoraMs - Date.parse(data.generado)) / 60_000)));
+
+	async function refrescar(avisar = false) {
+		if (actualizando) return;
+		actualizando = true;
+		try {
+			// Sin señal, invalidateAll no falla con gracia: pinta la página de error.
+			// Primero una pregunta barata; solo si contesta, se recargan los datos.
+			const vivo = await fetch(location.pathname, { method: 'HEAD', cache: 'no-store', signal: AbortSignal.timeout(4000) })
+				.then((res) => res.ok)
+				.catch(() => false);
+			if (vivo) await invalidateAll();
+			else if (avisar) mensaje = { texto: 'Sin señal: te enseño lo último que se cargó.', malo: true };
+		} finally {
+			actualizando = false;
+			ahoraMs = Date.now();
+		}
+	}
+
+	onMount(() => {
+		bandeja = leerBandeja();
+		void vaciarBandeja();
+		const alVolver = () => {
+			if (document.visibilityState !== 'visible') return;
+			ahoraMs = Date.now();
+			void vaciarBandeja();
+			void refrescar();
+		};
+		const alConectar = () => void vaciarBandeja();
+		document.addEventListener('visibilitychange', alVolver);
+		window.addEventListener('online', alConectar);
+		window.addEventListener('pageshow', alVolver); // iOS restaura páginas de memoria
+		const reloj = setInterval(() => {
+			ahoraMs = Date.now();
+			if (document.visibilityState !== 'visible') return;
+			if (bandeja.length) void vaciarBandeja();
+			else void refrescar();
+		}, 60_000);
+		return () => {
+			document.removeEventListener('visibilitychange', alVolver);
+			window.removeEventListener('online', alConectar);
+			window.removeEventListener('pageshow', alVolver);
+			clearInterval(reloj);
+		};
+	});
 </script>
 
 <svelte:head><title>hipolog</title></svelte:head>
@@ -179,13 +317,19 @@
 				Hoy no has registrado ninguna toma.
 			{/if}
 		</p>
+		<p class="frescura" class:vieja={edadMin >= 10}>
+			{edadMin < 1 ? 'Actualizado ahora' : `Actualizado hace ${edadMin} min`}
+			<button type="button" class="actualizar" onclick={() => refrescar(true)} disabled={actualizando}>
+				{actualizando ? 'actualizando…' : 'Actualizar'}
+			</button>
+		</p>
 	</header>
 
 	<div class="cols">
 	<div class="col captura">
 	<!-- REGISTRAR ------------------------------------------------------- -->
 	<section class="tarjeta registro">
-		<form method="POST" action="?/registrar" use:enhance>
+		<form method="POST" action="?/registrar" use:enhance={capturar}>
 			<input type="hidden" name="detallado" value={panelAbierto ? '1' : '0'} />
 
 			<fieldset class="chips proposito">
@@ -250,12 +394,27 @@
 			</details>
 		</form>
 
-		{#if form?.error}
+		{#if mensaje}
+			<p class="aviso" class:malo={mensaje.malo} class:bien={!mensaje.malo}>{mensaje.texto}</p>
+		{:else if form?.error}
 			<p class="aviso malo">{form.error}</p>
 		{:else if form?.ok}
 			<p class="aviso bien">{form.ok}</p>
 		{/if}
 	</section>
+
+	<!-- POR ENVIAR ------------------------------------------------------ -->
+	{#if bandeja.length}
+		<section class="tarjeta por-enviar" aria-live="polite">
+			<h2>Por enviar <small>guardadas en tu teléfono</small></h2>
+			<ul>
+				{#each bandeja as p (p.id)}
+					<li><span class="hora">{p.hora}</span> <span>{p.etiqueta}</span></li>
+				{/each}
+			</ul>
+			<p class="pie">Se envían solas, con su hora, en cuanto haya señal. No borres los datos de este navegador mientras tanto.</p>
+		</section>
+	{/if}
 
 	<!-- INVENTARIO ------------------------------------------------------ -->
 	<section class="tiles">
@@ -1352,6 +1511,42 @@
 		margin: 6px 0 0;
 	}
 
+	.frescura {
+		margin: 2px 0 0;
+		font-size: 0.78rem;
+		color: var(--ink-3);
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.frescura.vieja {
+		color: var(--ambar);
+		font-weight: 600;
+	}
+	.actualizar {
+		font: inherit;
+		font-size: 0.78rem;
+		padding: 2px 10px;
+		border: 1px solid var(--line);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--ink-2);
+		cursor: pointer;
+	}
+	.por-enviar {
+		border-color: var(--ambar);
+	}
+	.por-enviar ul {
+		list-style: none;
+		margin: 0 0 6px;
+		padding: 0;
+	}
+	.por-enviar li {
+		display: flex;
+		gap: 10px;
+		padding: 6px 0;
+		border-top: 1px solid var(--line);
+	}
 	.respaldos {
 		margin: 0 0 4px;
 	}
