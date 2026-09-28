@@ -7,6 +7,21 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+# El servidor MCP (src/mcp). Corre el TypeScript tal cual: Node 24 quita los
+# tipos al cargar. Es la unica parte con dependencias de runtime (el SDK de
+# MCP), por eso va en su propia imagen y la de la app sigue sin node_modules.
+# Va ANTES de la etapa final para que `build: .` siga construyendo la app.
+FROM node:24-alpine AS mcp
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+COPY src/lib ./src/lib
+COPY src/mcp ./src/mcp
+USER node
+EXPOSE 3001
+CMD ["node", "src/mcp/server.ts"]
+
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production

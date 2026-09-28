@@ -28,5 +28,28 @@ services:
     volumes:
       - hipolog-datos:/datos
 
+  # Servidor MCP para el conector de claude.ai. Lee la misma base y solo
+  # puede AGREGAR tomas (src/mcp/datos.ts). Escucha solo en 127.0.0.1: lo
+  # publica `tailscale funnel` en el 8443, con OAuth (ver README).
+  hipolog-mcp:
+    build:
+      context: .
+      target: mcp
+    container_name: hipolog-mcp
+    restart: unless-stopped
+    depends_on:
+      - hipolog
+    ports:
+      - "127.0.0.1:8478:3001"
+    env_file: .env.mcp # MCP_CLAVE_HASH; se genera con `node src/mcp/clave.ts`
+    environment:
+      TZ: "America/Mexico_City"
+      HIPOLOG_DB: "/datos/hipolog.db"
+      MCP_AUTH_DB: "/datos/mcp-auth.db"
+      MCP_URL_PUBLICA: "https://homie-lab.tail48b215.ts.net:8443"
+      CARELINK_URL: "http://172.22.0.1:8081"
+    volumes:
+      - hipolog-datos:/datos
+
 volumes:
   hipolog-datos:

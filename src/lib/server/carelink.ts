@@ -1,4 +1,4 @@
-import { flechaDe, normalizarLecturas, partirTimestamp, type Lectura } from '$lib/glucosa';
+import { flechaDe, normalizarLecturas, partirTimestamp, type Lectura } from '../glucosa.ts';
 
 /**
  * Lector del proxy REST de carelink-python-client

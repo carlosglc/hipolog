@@ -123,6 +123,38 @@ Queda en `http://homie-lab.local:8477`.
 
 Sin auth: es LAN. No lo publiques a internet — son datos médicos.
 
+## Conector MCP (claude.ai)
+
+`src/mcp/` es un servidor MCP remoto para que Claude consulte el registro
+desde claude.ai (web o iPhone). Corre en su propio contenedor, `hipolog-mcp`,
+sobre la misma base.
+
+| Herramienta | Qué hace |
+|---|---|
+| `tomas` | cada tap entre dos fechas |
+| `episodios` | las bajas, agrupando taps a ≤15 min (`episodios.ts`) |
+| `resumen` | lo mismo que el tablero (`resumir`) |
+| `sensor` | glucosa actual y lecturas de las últimas horas |
+| `preajustes` | geles, jugos y sus gramos |
+| `registrar_toma` | agrega UNA toma; no edita ni borra |
+
+- **Solo agrega.** Las consultas van por una conexión `readOnly`; la de
+  escritura solo hace el INSERT de `registrar_toma`. Lo que entra por aquí
+  lleva `cliente_id = mcp-…`. Rechaza horas futuras y una segunda toma de
+  la misma fuente a la misma hora.
+- **Publicado solo el MCP.** Escucha en `127.0.0.1:8478` y lo expone
+  `tailscale funnel --bg --https=8443 http://127.0.0.1:8478`. La app sigue
+  sin login y sin Funnel: el 443 es solo del tailnet.
+- **OAuth de un solo usuario.** Solo se pueden registrar clientes que
+  regresen a claude.ai, claude.com o loopback. Contraseña: su hash va en
+  `.env.mcp` (fuera del repo); cinco fallos bloquean 15 min. Tokens hasheados
+  en `/datos/mcp-auth.db`: acceso 1 h, refresh 60 días con rotación.
+- Cambiar la contraseña: `node src/mcp/clave.ts`, poner el hash en
+  `.env.mcp` y `docker compose up -d hipolog-mcp`.
+
+En claude.ai: Settings → Connectors → Add custom connector →
+`https://homie-lab.tail48b215.ts.net:8443/mcp`.
+
 ## Desarrollo
 
 ```bash
@@ -135,7 +167,7 @@ npm run dev             # http://127.0.0.1:3737
 
 ```bash
 npm run check   # 0 errores
-npm test        # 11 pruebas (resumen.ts y fechas.ts)
+npm test        # src/lib y src/mcp
 ```
 
 Y ábrelo en un navegador de verdad: `npm run build && node build`. El check y el

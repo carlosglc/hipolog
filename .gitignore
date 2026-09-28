@@ -6,3 +6,6 @@ build/
 *.db-wal
 *.db-shm
 datos/
+
+# Hash de la clave del conector MCP. Nunca al repo.
+.env.mcp
