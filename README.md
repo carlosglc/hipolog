@@ -142,9 +142,12 @@ sobre la misma base.
   escritura solo hace el INSERT de `registrar_toma`. Lo que entra por aquí
   lleva `cliente_id = mcp-…`. Rechaza horas futuras y una segunda toma de
   la misma fuente a la misma hora.
-- **Publicado solo el MCP.** Escucha en `127.0.0.1:8478` y lo expone
-  `tailscale funnel --bg --https=8443 http://127.0.0.1:8478`. La app sigue
-  sin login y sin Funnel: el 443 es solo del tailnet.
+- **Publicado solo el MCP.** Lo expone `hipolog-mcp-ts`, un nodo de
+  Tailscale propio (`hipolog-mcp.tail48b215.ts.net`) con Funnel en su 443
+  (`tailscale/serve.json`). claude.ai solo se conecta por el 443, y el 443
+  de homie-lab no se abre: Funnel va por puerto y expondría la app, que no
+  tiene login. `127.0.0.1:8478` queda solo para pruebas locales. Al nodo
+  hay que desactivarle *key expiry* en la consola de Tailscale.
 - **OAuth de un solo usuario.** Solo se pueden registrar clientes que
   regresen a claude.ai, claude.com o loopback. Contraseña: su hash va en
   `.env.mcp` (fuera del repo); cinco fallos bloquean 15 min. Tokens hasheados
@@ -153,7 +156,7 @@ sobre la misma base.
   `.env.mcp` y `docker compose up -d hipolog-mcp`.
 
 En claude.ai: Settings → Connectors → Add custom connector →
-`https://homie-lab.tail48b215.ts.net:8443/mcp`.
+`https://hipolog-mcp.tail48b215.ts.net/mcp`.
 
 ## Desarrollo
 
